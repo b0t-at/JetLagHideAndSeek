@@ -26,17 +26,17 @@ export default defineConfig({
                     "Automatically generate maps for Jet Lag The Game: Hide and Seek with ease! Simply name the questions and watch the map eliminate hundreds of possibilities in seconds.",
                 icons: [
                     {
-                        src: "https://jetlag.b0t.at/JLIcon.png",
+                        src: "https://b0t-at.github.io/JetLagHideAndSeek/JLIcon.png",
                         sizes: "1080x1080",
                         type: "image/png",
                     },
                     {
-                        src: "https://jetlag.b0t.at/android-chrome-192x192.png",
+                        src: "https://b0t-at.github.io/JetLagHideAndSeek/android-chrome-192x192.png",
                         sizes: "192x192",
                         type: "image/png",
                     },
                     {
-                        src: "https://jetlag.b0t.at/android-chrome-512x512.png",
+                        src: "https://b0t-at.github.io/JetLagHideAndSeek/android-chrome-512x512.png",
                         sizes: "512x512",
                         type: "image/png",
                     },
@@ -47,6 +47,6 @@ export default defineConfig({
     devToolbar: {
         enabled: false,
     },
-    site: "https://jetlag.b0t.at",
-    base: "",
+    site: "https://b0t-at.github.io/",
+    base: "JetLagHideAndSeek",
 });
