@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  d3-geo-voronoi@2.1.0: a53155599cc1ca640bb0694318640ebd971a3a5265b5ec06889e4eaf8ceb5002
+
 importers:
 
   .:
@@ -88,7 +91,7 @@ importers:
         version: 4.0.0
       d3-geo-voronoi:
         specifier: ^2.1.0
-        version: 2.1.0
+        version: 2.1.0(patch_hash=a53155599cc1ca640bb0694318640ebd971a3a5265b5ec06889e4eaf8ceb5002)
       leaflet:
         specifier: ^1.9.4
         version: 1.9.4
@@ -10406,7 +10409,7 @@ snapshots:
       d3-array: 3.2.4
       d3-geo: 3.1.1
 
-  d3-geo-voronoi@2.1.0:
+  d3-geo-voronoi@2.1.0(patch_hash=a53155599cc1ca640bb0694318640ebd971a3a5265b5ec06889e4eaf8ceb5002):
     dependencies:
       d3-array: 3.2.4
       d3-delaunay: 6.0.4

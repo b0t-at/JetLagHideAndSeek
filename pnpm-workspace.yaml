@@ -2,3 +2,5 @@ allowBuilds:
     "@vaadin/vaadin-usage-statistics": true
     esbuild: true
     sharp: true
+patchedDependencies:
+    d3-geo-voronoi@2.1.0: patches/d3-geo-voronoi@2.1.0.patch
