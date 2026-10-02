@@ -8,7 +8,8 @@
         "preview": "astro preview",
         "astro": "astro",
         "lint": "eslint --fix src && prettier . --write",
-        "test": "vitest"
+        "test": "vitest",
+        "data:vienna": "node scripts/build-vienna-data.mjs"
     },
     "dependencies": {
         "@arcgis/core": "^4.32.10",

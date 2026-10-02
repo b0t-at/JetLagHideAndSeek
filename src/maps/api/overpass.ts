@@ -14,6 +14,12 @@ import {
 } from "@/lib/context";
 import { safeUnion } from "@/maps/geo-utils";
 
+import {
+    bundledAdminBoundary,
+    bundledAround,
+    bundledRelation,
+    bundledZonePlaces,
+} from "./bundled";
 import { cacheFetch, determineCache } from "./cache";
 import { LOCATION_FIRST_TAG, OVERPASS_HOSTS } from "./constants";
 import type {
@@ -130,11 +136,13 @@ export const determineGeoJSON = async (
     };
     const osmType = osmTypeMap[osmTypeLetter];
     const query = `[out:json];${osmType}(${osmId});out geom;`;
-    const data = await getOverpassData(
-        query,
-        "Loading map data...",
-        CacheType.PERMANENT_CACHE,
-    );
+    const data =
+        (await bundledRelation(osmId, osmTypeLetter)) ??
+        (await getOverpassData(
+            query,
+            "Loading map data...",
+            CacheType.PERMANENT_CACHE,
+        ));
     const geo = osmtogeojson(data);
     return {
         ...geo,
@@ -148,16 +156,23 @@ export const findTentacleLocations = async (
     question: TentacleLocationQuery,
     text: string = "Determining tentacle locations...",
 ) => {
-    const query = `
-[out:json][timeout:25];
-nwr["${LOCATION_FIRST_TAG[question.locationType]}"="${question.locationType}"](around:${turf.convertLength(
+    const radiusMeters = turf.convertLength(
         question.radius,
         question.unit,
         "meters",
-    )}, ${question.lat}, ${question.lng});
+    );
+    const query = `
+[out:json][timeout:25];
+nwr["${LOCATION_FIRST_TAG[question.locationType]}"="${question.locationType}"](around:${radiusMeters}, ${question.lat}, ${question.lng});
 out center;
     `;
-    const data = await getOverpassData(query, text);
+    const data =
+        (await bundledAround(
+            question.locationType,
+            question.lat,
+            question.lng,
+            radiusMeters,
+        )) ?? (await getOverpassData(query, text));
     const elements = data.elements;
     const response = turf.points([]);
     elements.forEach((element: any) => {
@@ -195,6 +210,9 @@ export const findAdminBoundary = async (
     longitude: number,
     adminLevel: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10,
 ) => {
+    const bundled = await bundledAdminBoundary(latitude, longitude, adminLevel);
+    if (bundled) return bundled;
+
     const query = `
 [out:json];
 is_in(${latitude}, ${longitude})->.a;
@@ -284,6 +302,13 @@ export const findPlacesInZone = async (
     alternatives: string[] = [],
     timeoutDuration: number = 0,
 ) => {
+    const bundled = await bundledZonePlaces(
+        searchType,
+        [filter, ...alternatives],
+        outType,
+    );
+    if (bundled) return bundled;
+
     let query = "";
     const $polyGeoJSON = polyGeoJSON.get();
     if ($polyGeoJSON) {
