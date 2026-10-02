@@ -6,6 +6,7 @@ import { toast } from "react-toastify";
 
 import {
     additionalMapGeoLocations,
+    mapGeoJSON,
     mapGeoLocation,
     overpassCustomHost,
     overpassHost,
@@ -180,55 +181,56 @@ export const fetchCoastline = async () => {
     return data;
 };
 
+const TRAIN_ROUTE_FILTER =
+    '["type"="route"]["route"~"^(train|subway|light_rail|monorail)$"]';
+
+/** Adds the other stop_areas of their stop_area_group, so an interchange counts as one station */
+const withGroupedStopAreas = (set: string) =>
+    `rel(br.${set})["public_transport"="stop_area_group"];rel(r)["public_transport"="stop_area"]->.grouped;(.${set};.grouped;)->.${set};`;
+
+/**
+ * Ids of the nodes (stations, stops) on any train line serving the given station.
+ * Lines are found through the station's stop_area and the route relations of its stops.
+ */
 export const trainLineNodeFinder = async (node: string): Promise<number[]> => {
-    const nodeId = node.split("/")[1];
-    const tagQuery = `
-[out:json];
-node(${nodeId});
-wr(bn);
-out tags;
-`;
-    const tagData = await getOverpassData(tagQuery, "Finding train line...");
+    const [type, id] = node.split("/");
+    // Custom station lists may carry arbitrary ids
+    if (!/^(node|way|relation)$/.test(type) || !/^\d+$/.test(id)) return [];
+
+    const $mapGeoJSON = mapGeoJSON.get();
+    // Stops outside the play area can't be anyone's nearest station
+    const bbox = $mapGeoJSON
+        ? (([w, s, e, n]) => `(${s},${w},${n},${e})`)(turf.bbox($mapGeoJSON))
+        : "";
     const query = `
 [out:json];
+${type}(${id})->.station;
+rel(b${type[0]}.station)["public_transport"="stop_area"]->.areas;
+${withGroupedStopAreas("areas")}
+(node(r.areas);way(r.areas);rel(r.areas);.station;)->.members;
 (
-${tagData.elements
-    .map((element: any) => {
-        if (
-            !element.tags.name &&
-            !element.tags["name:en"] &&
-            !element.tags.network
-        )
-            return "";
-        let query = "";
-        if (element.tags.name) query += `wr["name"="${element.tags.name}"];`;
-        if (element.tags["name:en"])
-            query += `wr["name:en"="${element.tags["name:en"]}"];`;
-        if (element.tags["network"])
-            query += `wr["network"="${element.tags["network"]}"];`;
-        return query;
-    })
-    .join("\n")}
-);
-out geom;
+rel(bn.members)${TRAIN_ROUTE_FILTER};
+rel(bw.members)${TRAIN_ROUTE_FILTER};
+rel(br.members)${TRAIN_ROUTE_FILTER};
+)->.routes;
+(
+node(r.routes)${bbox};
+way(r.routes:"platform")${bbox};
+way(r.routes:"platform_entry_only")${bbox};
+way(r.routes:"platform_exit_only")${bbox};
+rel(r.routes)${bbox};
+)->.stops;
+(
+rel(bn.stops)["public_transport"="stop_area"];
+rel(bw.stops)["public_transport"="stop_area"];
+rel(br.stops)["public_transport"="stop_area"];
+)->.served;
+${withGroupedStopAreas("served")}
+(node.stops;node(r.served););
+out ids;
 `;
     const data = await getOverpassData(query, "Finding train lines...");
-    const geoJSON = osmtogeojson(data);
-    const nodes: number[] = [];
-    geoJSON.features.forEach((feature: any) => {
-        if (feature && feature.id && feature.id.startsWith("node")) {
-            nodes.push(parseInt(feature.id.split("/")[1]));
-        }
-    });
-    data.elements.forEach((element: any) => {
-        if (element && element.type === "node") {
-            nodes.push(element.id);
-        } else if (element && element.type === "way") {
-            nodes.push(...element.nodes);
-        }
-    });
-    const uniqNodes = _.uniq(nodes);
-    return uniqNodes;
+    return _.uniq(data.elements.map((element: any) => element.id));
 };
 
 export const findPlacesInZone = async (
