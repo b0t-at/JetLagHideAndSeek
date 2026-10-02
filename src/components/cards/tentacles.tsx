@@ -236,7 +236,10 @@ const TentacleLocationSelector = ({
     useStore(triggerLocalRefresh);
     const $hiderMode = useStore(hiderMode);
     const locations = use(promise);
-    const [filteredFeatures, setFilteredFeatures] = useState<any[]>([]);
+    // null until filtered, so a saved answer isn't cleared on the first render
+    const [filteredFeatures, setFilteredFeatures] = useState<any[] | null>(
+        null,
+    );
 
     // Filter locations to only those within the radius of the primary location
     useEffect(() => {
@@ -294,6 +297,7 @@ const TentacleLocationSelector = ({
         : null;
     if (
         _selectedLocationName &&
+        filteredFeatures &&
         !filteredFeatures.find(
             (f: any) => f.properties.name === _selectedLocationName,
         )
@@ -307,7 +311,7 @@ const TentacleLocationSelector = ({
             trigger="Location"
             options={{
                 false: "Not Within",
-                ...mapToObj(filteredFeatures, (feature: any) => [
+                ...mapToObj(filteredFeatures ?? [], (feature: any) => [
                     feature.properties.name,
                     feature.properties.name,
                 ]),
@@ -317,7 +321,7 @@ const TentacleLocationSelector = ({
                 if (value === "false") {
                     data.location = false;
                 } else {
-                    data.location = filteredFeatures.find(
+                    data.location = (filteredFeatures ?? []).find(
                         (feature: any) => feature.properties.name === value,
                     );
                 }
