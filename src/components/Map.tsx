@@ -521,6 +521,16 @@ export const Map = ({ className }: { className?: string }) => {
     }, [map]);
 
     useEffect(() => {
+        if (!map) return;
+
+        // Leaflet only notices window resizes, not a sidebar opening or closing
+        const observer = new ResizeObserver(() => map.invalidateSize());
+        observer.observe(map.getContainer());
+
+        return () => observer.disconnect();
+    }, [map]);
+
+    useEffect(() => {
         const handleFullscreenChange = () => {
             const mainElement: HTMLElement | null =
                 document.querySelector("main");
