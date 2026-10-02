@@ -17,6 +17,7 @@ import {
     isLoading,
     leafletMapContext,
 } from "@/lib/context";
+import { readClipboardText } from "@/lib/utils";
 
 export const AddQuestionDialog = ({
     children,
@@ -103,14 +104,9 @@ export const AddQuestionDialog = ({
     };
 
     const runPasteQuestion = async () => {
-        if (!navigator || !navigator.clipboard) {
-            toast.error("Clipboard API not supported in your browser");
-            return false;
-        }
-
         try {
             await toast.promise(
-                navigator.clipboard.readText().then((text) => {
+                readClipboardText().then((text) => {
                     const parsed = JSON.parse(text);
                     const question =
                         parsed &&

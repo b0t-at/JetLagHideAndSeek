@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDebounce } from "@/hooks/useDebounce";
 import { allowGooglePlusCodes, isLoading } from "@/lib/context";
-import { cn } from "@/lib/utils";
+import { cn, readClipboardText } from "@/lib/utils";
 import { determineName, geocode, ICON_COLORS } from "@/maps/api";
 
 import { Button } from "./ui/button";
@@ -473,18 +473,10 @@ export const LatitudeLongitude = ({
                         <Button
                             variant="outline"
                             onClick={() => {
-                                if (!navigator || !navigator.clipboard) {
-                                    toast.error(
-                                        "Clipboard API not supported in your browser",
-                                    );
-                                    return;
-                                }
-
                                 isLoading.set(true);
 
                                 toast.promise(
-                                    navigator.clipboard
-                                        .readText()
+                                    readClipboardText()
                                         .finally(() => {
                                             isLoading.set(false);
                                         })

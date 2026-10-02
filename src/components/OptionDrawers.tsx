@@ -52,6 +52,7 @@ import {
     compress,
     decompress,
     fetchFromPastebin,
+    readClipboardText,
     shareOrFallback,
     uploadToPastebin,
 } from "@/lib/utils";
@@ -524,13 +525,11 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 </Button>
                                 <Button
                                     onClick={() => {
-                                        if (!navigator || !navigator.clipboard)
-                                            return toast.error(
-                                                "Clipboard not supported",
+                                        readClipboardText()
+                                            .then(loadHidingZone)
+                                            .catch(() =>
+                                                toast.error("Nothing pasted"),
                                             );
-                                        navigator.clipboard
-                                            .readText()
-                                            .then(loadHidingZone);
                                     }}
                                 >
                                     Paste Hiding Zone
@@ -672,14 +671,9 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 </Button>
                                 <Button
                                     onClick={async () => {
-                                        if (!navigator || !navigator.clipboard)
-                                            return toast.error(
-                                                "Clipboard not supported",
-                                            );
-
                                         try {
                                             const clipboard =
-                                                await navigator.clipboard.readText();
+                                                await readClipboardText();
                                             const geojson =
                                                 JSON.parse(clipboard);
                                             permanentOverlay.set(geojson);

@@ -11,6 +11,7 @@ import {
     updateCustomPreset,
 } from "@/lib/context";
 import { questionModified } from "@/lib/context";
+import { readClipboardText } from "@/lib/utils";
 
 type Props = {
     data: any;
@@ -81,7 +82,7 @@ const CustomPresets: React.FC<Props> = ({ data, presetTypeHint }) => {
 
     const handleApplyFromClipboard = async () => {
         try {
-            const text = await navigator.clipboard.readText();
+            const text = await readClipboardText();
             if (!text) {
                 toast.error("Clipboard is empty");
                 return;

@@ -104,6 +104,20 @@ export async function fetchFromPastebin(pasteId: string): Promise<string> {
 }
 
 /**
+ * Reads text from the clipboard, falling back to a paste prompt where reading is
+ * blocked (e.g. Firefox on Android unless its own "Paste" popup is tapped)
+ */
+export async function readClipboardText(): Promise<string> {
+    try {
+        return await navigator.clipboard.readText();
+    } catch {
+        const text = window.prompt("Couldn't read the clipboard. Paste here:");
+        if (text === null) throw new Error("Nothing pasted");
+        return text;
+    }
+}
+
+/**
  * Open native share sheet or fallback to sending to clipboard
  * @param url URL to share
  * @param forceClipboard Whether to force usage of the clipboard (instead of share sheet)
