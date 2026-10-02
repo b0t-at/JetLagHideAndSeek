@@ -29,6 +29,54 @@ type TentacleLocationQuery = Pick<
     "lat" | "lng" | "radius" | "unit" | "locationType"
 >;
 
+// Public Overpass servers often hang or time out; ask the next one as well if one is this slow
+const ASK_NEXT_HOST_AFTER_MS = 20000;
+
+/** The first successful response from the hosts, tried in order; or the last error */
+const fetchFromHosts = (urls: string[], cacheType: CacheType) =>
+    new Promise<{ response: Response; url: string } | string>((resolve) => {
+        let next = 0;
+        let running = 0;
+        let settled = false;
+        let lastError = "no response";
+
+        const tryNext = () => {
+            if (settled) return;
+            if (next >= urls.length) {
+                if (running === 0) {
+                    settled = true;
+                    resolve(lastError);
+                }
+                return;
+            }
+
+            const url = urls[next++];
+            running++;
+            const askNext = setTimeout(tryNext, ASK_NEXT_HOST_AFTER_MS);
+            cacheFetch(url, undefined, cacheType)
+                .then((response) => {
+                    if (response.ok) {
+                        if (!settled) {
+                            settled = true;
+                            resolve({ response, url });
+                        }
+                    } else {
+                        lastError = `${response.status} ${response.statusText}`;
+                    }
+                })
+                .catch((error) => {
+                    lastError = String(error);
+                })
+                .finally(() => {
+                    running--;
+                    clearTimeout(askNext);
+                    tryNext();
+                });
+        };
+
+        tryNext();
+    });
+
 export const getOverpassData = async (
     query: string,
     loadingText?: string,
@@ -45,43 +93,30 @@ export const getOverpassData = async (
             : selectedHost || allHostUrls[0];
     const fallbackBaseUrls = allHostUrls.filter((h) => h !== primaryBaseUrl);
 
-    const primaryUrl = `${primaryBaseUrl}?data=${encodedQuery}`;
-    let response = await cacheFetch(primaryUrl, loadingText, cacheType);
+    const urls = [primaryBaseUrl, ...fallbackBaseUrls].map(
+        (base) => `${base}?data=${encodedQuery}`,
+    );
+    const cache = await determineCache(cacheType).catch(() => null);
+    const cached = await cache?.match(urls[0]);
+    if (cached?.ok) return await cached.json();
 
-    if (!response.ok) {
-        for (const fallbackBase of fallbackBaseUrls) {
-            try {
-                const fallbackResponse = await cacheFetch(
-                    `${fallbackBase}?data=${encodedQuery}`,
-                    loadingText,
-                    cacheType,
-                );
-                if (fallbackResponse.ok) {
-                    const cache = await determineCache(cacheType);
-                    await cache.put(primaryUrl, fallbackResponse.clone());
-                    response = fallbackResponse;
-                    break;
-                }
-            } catch {
-                toast.error(
-                    `Could not load data from Overpass: ${response.status} ${response.statusText}`,
-                    { toastId: "overpass-error" },
-                );
-                return { elements: [] };
-            }
-        }
-    }
+    const pending = fetchFromHosts(urls, cacheType);
+    const result = await (loadingText
+        ? toast.promise(pending, { pending: loadingText })
+        : pending);
 
-    if (!response.ok) {
-        toast.error(
-            `Could not load data from Overpass: ${response.status} ${response.statusText}`,
-            { toastId: "overpass-error" },
-        );
+    if (typeof result === "string") {
+        toast.error(`Could not load data from Overpass: ${result}`, {
+            toastId: "overpass-error",
+        });
         return { elements: [] };
     }
 
-    const data = await response.json();
-    return data;
+    if (cache && result.url !== urls[0]) {
+        await cache.put(urls[0], result.response.clone()).catch(() => {});
+    }
+
+    return await result.response.json();
 };
 
 export const determineGeoJSON = async (

@@ -49,7 +49,8 @@ export const cacheFetch = async (
         const fetchAndMaybeCache = async () => {
             const response = await fetch(url);
             if (response.ok) {
-                await cache.put(url, response.clone());
+                // A full cache (e.g. a huge response) must not fail the request itself
+                await cache.put(url, response.clone()).catch(() => {});
             } else {
                 await cache.delete(url);
             }
