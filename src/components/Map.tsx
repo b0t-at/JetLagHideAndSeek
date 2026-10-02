@@ -122,7 +122,6 @@ export const Map = ({ className }: { className?: string }) => {
     const $baseTileLayer = useStore(baseTileLayer);
     const $thunderforestApiKey = useStore(thunderforestApiKey);
     const $hiderMode = useStore(hiderMode);
-    const $isLoading = useStore(isLoading);
     const $followMe = useStore(followMe);
     const $permanentOverlay = useStore(permanentOverlay);
     const map = useStore(leafletMapContext);
@@ -136,11 +135,68 @@ export const Map = ({ className }: { className?: string }) => {
         [],
     );
 
+    /**
+     * A refresh requested while something else is loading is dropped, unless the
+     * play area or the list of questions changed since the last refresh started:
+     * then it's queued, so the map doesn't keep showing an outdated state
+     */
+    const refreshState = useMemo(
+        () => ({
+            running: false,
+            areaVersion: 0,
+            runAreaVersion: 0,
+            runQuestionKeys: "",
+            queued: null as { focus: boolean } | null,
+        }),
+        [],
+    );
+    const playAreaChanged = () =>
+        refreshState.areaVersion !== refreshState.runAreaVersion;
+    const refreshOutdated = () =>
+        playAreaChanged() ||
+        questions
+            .get()
+            .map((q) => q.key)
+            .join() !== refreshState.runQuestionKeys;
+
+    const runQueuedRefresh = () => {
+        if (refreshState.running || isLoading.get() || !refreshState.queued) {
+            return;
+        }
+
+        const { focus } = refreshState.queued;
+        refreshState.queued = null;
+        setTimeout(() => latestRefreshQuestions.current(focus));
+    };
+
     const refreshQuestions = async (focus: boolean = false) => {
         if (!map) return;
 
-        if ($isLoading) return;
+        if (refreshState.running || isLoading.get()) {
+            if (refreshOutdated()) {
+                refreshState.queued = {
+                    focus: focus || !!refreshState.queued?.focus,
+                };
+            }
+            return;
+        }
 
+        refreshState.running = true;
+        refreshState.runAreaVersion = refreshState.areaVersion;
+        refreshState.runQuestionKeys = $questions.map((q) => q.key).join();
+        try {
+            await drawQuestions(map, focus);
+        } catch (error) {
+            // Thrown before drawQuestions released isLoading, e.g. a failed Overpass request
+            console.log(error);
+            isLoading.set(false);
+        } finally {
+            refreshState.running = false;
+            runQueuedRefresh();
+        }
+    };
+
+    const drawQuestions = async (map: L.Map, focus: boolean) => {
         isLoading.set(true);
 
         if ($questions.length === 0) {
@@ -158,6 +214,7 @@ export const Map = ({ className }: { className?: string }) => {
                 await toast.promise(
                     determineMapBoundaries()
                         .then((x) => {
+                            if (playAreaChanged()) return; // Stale, rerun below
                             mapGeoJSON.set(x);
                             mapGeoData = x;
                         })
@@ -167,6 +224,12 @@ export const Map = ({ className }: { className?: string }) => {
                     },
                 );
             }
+        }
+
+        if (refreshOutdated()) {
+            refreshState.queued = { focus: true };
+            isLoading.set(false);
+            return;
         }
 
         if ($hiderMode !== false) {
@@ -195,6 +258,12 @@ export const Map = ({ className }: { className?: string }) => {
                     geoJSONPlane.addTo(map);
                 },
             );
+
+            // Don't draw an outdated state if it changed while the questions were applied
+            if (refreshOutdated()) {
+                refreshState.queued = { focus: true };
+                return;
+            }
 
             mapGeoData = {
                 type: "FeatureCollection",
@@ -239,6 +308,38 @@ export const Map = ({ className }: { className?: string }) => {
             isLoading.set(false);
         }
     };
+
+    // A queued refresh must use the questions from the latest render
+    const latestRefreshQuestions = useMemo(
+        () => ({ current: refreshQuestions }),
+        [],
+    );
+    latestRefreshQuestions.current = refreshQuestions;
+
+    useEffect(() => {
+        // Compare contents: stores are also re-set unchanged, e.g. restored from storage on pageshow
+        const areaKey = () =>
+            JSON.stringify([
+                mapGeoLocation.get(),
+                additionalMapGeoLocations.get(),
+                polyGeoJSON.get(),
+            ]);
+        let lastAreaKey = areaKey();
+        const bumpAreaVersion = () => {
+            const key = areaKey();
+            if (key === lastAreaKey) return;
+            lastAreaKey = key;
+            refreshState.areaVersion++;
+        };
+        const unbinds = [
+            mapGeoLocation.listen(bumpAreaVersion),
+            additionalMapGeoLocations.listen(bumpAreaVersion),
+            polyGeoJSON.listen(bumpAreaVersion),
+            isLoading.listen(runQueuedRefresh),
+        ];
+
+        return () => unbinds.forEach((unbind) => unbind());
+    }, []);
 
     const displayMap = useMemo(
         () => (
@@ -412,7 +513,7 @@ export const Map = ({ className }: { className?: string }) => {
             });
             if (layerCount > 1) {
                 console.log("Too many layers, refreshing...");
-                refreshQuestions(false);
+                latestRefreshQuestions.current(false);
             }
         }, 1000);
 

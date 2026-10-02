@@ -447,14 +447,15 @@ export const LatitudeLongitude = ({
                                             );
                                         },
                                     )
+                                        .finally(() => {
+                                            isLoading.set(false);
+                                        })
+                                        // Only after isLoading is released, or the map won't refresh
                                         .then((position) => {
                                             onChange(
                                                 position.coords.latitude,
                                                 position.coords.longitude,
                                             );
-                                        })
-                                        .finally(() => {
-                                            isLoading.set(false);
                                         }),
                                     {
                                         pending: "Fetching location",
@@ -464,7 +465,7 @@ export const LatitudeLongitude = ({
                                     { autoClose: 500 },
                                 );
                             }}
-                            disabled={disabled}
+                            disabled={disabled || $isLoading}
                             title="Set to current location"
                         >
                             <LocateIcon />
@@ -484,6 +485,10 @@ export const LatitudeLongitude = ({
                                 toast.promise(
                                     navigator.clipboard
                                         .readText()
+                                        .finally(() => {
+                                            isLoading.set(false);
+                                        })
+                                        // Only after isLoading is released, or the map won't refresh
                                         .then((text) => {
                                             const coords =
                                                 parseCoordinatesFromText(text);
@@ -500,9 +505,6 @@ export const LatitudeLongitude = ({
                                             throw new Error(
                                                 "Could not find coordinates in clipboard content",
                                             );
-                                        })
-                                        .finally(() => {
-                                            isLoading.set(false);
                                         }),
                                     {
                                         pending: "Reading from clipboard",
@@ -513,7 +515,7 @@ export const LatitudeLongitude = ({
                                     { autoClose: 1000 },
                                 );
                             }}
-                            disabled={disabled}
+                            disabled={disabled || $isLoading}
                             title="Paste coordinates from clipboard"
                         >
                             <ClipboardPasteIcon />

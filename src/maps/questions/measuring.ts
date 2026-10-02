@@ -309,30 +309,35 @@ export const determineMeasuringBoundary = async (
     }
 };
 
-const bufferedDeterminer = _.memoize(
-    async (question: MeasuringQuestion) => {
+const bufferedDeterminerKey = (question: MeasuringQuestion) =>
+    JSON.stringify({
+        type: question.type,
+        lat: question.lat,
+        lng: question.lng,
+        entirety: polyGeoJSON.get() ? polyGeoJSON.get() : mapGeoLocation.get(),
+        geo: (question as any).geo,
+        cat: (question as any).cat,
+    });
+
+const bufferedDeterminer = _.memoize(async (question: MeasuringQuestion) => {
+    const key = bufferedDeterminerKey(question);
+
+    try {
         const placeData = await determineMeasuringBoundary(question);
 
         if (placeData === false || placeData === undefined) return false;
 
-        return arcBufferToPoint(
+        return await arcBufferToPoint(
             turf.featureCollection(placeData as any),
             question.lat,
             question.lng,
         );
-    },
-    (question) =>
-        JSON.stringify({
-            type: question.type,
-            lat: question.lat,
-            lng: question.lng,
-            entirety: polyGeoJSON.get()
-                ? polyGeoJSON.get()
-                : mapGeoLocation.get(),
-            geo: (question as any).geo,
-            cat: (question as any).cat,
-        }),
-);
+    } catch (error) {
+        // Don't keep a failure (e.g. the play area changed mid-refresh) cached
+        bufferedDeterminer.cache.delete(key);
+        throw error;
+    }
+}, bufferedDeterminerKey);
 
 export const adjustPerMeasuring = async (
     question: MeasuringQuestion,
