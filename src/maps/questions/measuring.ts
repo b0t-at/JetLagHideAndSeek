@@ -428,6 +428,8 @@ export const hiderifyMeasuring = async (question: MeasuringQuestion) => {
                 : QuestionSpecificLocation.Seven11,
         );
 
+        if (points.features.length === 0) return question;
+
         const seeker = turf.point([question.lng, question.lat]);
         const nearest = turf.nearestPoint(seeker, points as any);
 

@@ -351,8 +351,10 @@ export const ZoneSidebar = () => {
 
                     const englishName = extractStationName(nearestTrainStation);
 
-                    if (!englishName)
+                    if (!englishName) {
+                        isLoading.set(false);
                         return toast.error("No English name found");
+                    }
 
                     if (question.data.type === "same-first-letter-station") {
                         const letter = englishName[0].toUpperCase();
@@ -394,6 +396,11 @@ export const ZoneSidebar = () => {
                             ? QuestionSpecificLocation.McDonalds
                             : QuestionSpecificLocation.Seven11,
                     );
+
+                    if (points.features.length === 0) {
+                        warnNoSpecificPlaces(question.data.type);
+                        continue;
+                    }
 
                     const nearestPoint = turf.nearestPoint(
                         turf.point([question.data.lng, question.data.lat]),
@@ -444,6 +451,7 @@ export const ZoneSidebar = () => {
         if ($displayHidingZones && $questionFinishedMapData) {
             initializeHidingZones().catch((error) => {
                 console.log("Error in hiding zone initialization:", error);
+                isLoading.set(false);
                 toast.error(
                     "An error occurred during hiding zone initialization",
                     { toastId: "hiding-zone-initialization-error" },
@@ -1135,6 +1143,12 @@ function styleStations(
     }
 }
 
+const warnNoSpecificPlaces = (type: "mcdonalds" | "seven11") =>
+    toast.warning(
+        `No ${type === "mcdonalds" ? "McDonald's" : "7-Elevens"} found in the play area; skipping this question.`,
+        { toastId: `no-places-${type}` },
+    );
+
 /** The distance checks below work in miles; invalid input (e.g. a cleared field) counts as 0 */
 const hidingRadiusInMiles = (radius: number, units: turf.Units) =>
     Number.isFinite(radius) && radius >= 0
@@ -1352,6 +1366,11 @@ async function selectionProcess(
                     ? QuestionSpecificLocation.McDonalds
                     : QuestionSpecificLocation.Seven11,
             );
+
+            if (points.features.length === 0) {
+                warnNoSpecificPlaces(question.data.type);
+                continue;
+            }
 
             const seeker = turf.point([question.data.lng, question.data.lat]);
             const nearest = turf.nearestPoint(seeker, points as any);
