@@ -77,6 +77,8 @@ const HIDING_ZONE_URL_PARAM = "hz";
 const HIDING_ZONE_COMPRESSED_URL_PARAM = "hzc";
 const PASTEBIN_URL_PARAM = "pb";
 const FETCH_URL_PARAM = "url";
+// GitHub Pages accepts ~8 KB request lines; stay well below for messengers
+const MAX_SHARE_URL_LENGTH = 4000;
 
 /** Converts a hiding radius between units, rounded so the input stays readable */
 const convertHidingRadius = (radius: number, from: Units, to: Units) =>
@@ -419,8 +421,9 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
 
                     const baseUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}`;
                     let shareUrl = `${baseUrl}?${HIDING_ZONE_COMPRESSED_URL_PARAM}=${compressedData}`;
+                    const urlTooLong = shareUrl.length > MAX_SHARE_URL_LENGTH;
 
-                    if ($alwaysUsePastebin || shareUrl.length > 2000) {
+                    if ($alwaysUsePastebin || urlTooLong) {
                         if ($pastebinApiKey) {
                             try {
                                 toast.info(
@@ -439,13 +442,18 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 );
                             } catch (error) {
                                 console.error("Pastebin upload failed:", error);
+                                if (urlTooLong) {
+                                    toast.warning(
+                                        "Pastebin upload failed, falling back to file download.",
+                                    );
+                                    saveToFile();
+                                    return;
+                                }
                                 toast.warning(
-                                    "Pastebin upload failed, falling back to file download.",
+                                    "Pastebin upload failed, sharing a link instead.",
                                 );
-                                saveToFile();
-                                return;
                             }
-                        } else {
+                        } else if (urlTooLong) {
                             toast.info(
                                 "Data is too large for a URL — saving to file instead.",
                             );
