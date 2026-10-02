@@ -374,7 +374,8 @@ export const findPlacesSpecificInZone = async (
     );
 };
 
-export const nearestToQuestion = async (
+/** Places around the question, widening the search until one is found (cached per question) */
+export const findQuestionLocations = async (
     question: HomeGameMatchingQuestions | HomeGameMeasuringQuestions,
 ) => {
     let radius = 30;
@@ -392,6 +393,13 @@ export const nearestToQuestion = async (
         );
         radius += 30;
     }
+    return { instances, radiusMiles: radius - 30 };
+};
+
+export const nearestToQuestion = async (
+    question: HomeGameMatchingQuestions | HomeGameMeasuringQuestions,
+) => {
+    const { instances } = await findQuestionLocations(question);
     const questionPoint = turf.point([question.lng, question.lat]);
     return turf.nearestPoint(questionPoint, instances as any);
 };

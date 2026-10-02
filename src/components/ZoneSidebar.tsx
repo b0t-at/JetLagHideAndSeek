@@ -42,8 +42,8 @@ import {
     BLANK_GEOJSON,
     findPlacesInZone,
     findPlacesSpecificInZone,
+    findQuestionLocations,
     findTentacleLocations,
-    nearestToQuestion,
     normalizeToStationFeatures,
     parseCustomStationsFromText,
     QuestionSpecificLocation,
@@ -1198,27 +1198,19 @@ async function selectionProcess(
                 question.data.type === "consulate" ||
                 question.data.type === "park")
         ) {
-            const nearestQuestion = await nearestToQuestion(question.data);
+            // The search around the seeker is already cached; it suffices if it covers every candidate
+            const seekerSearch = await findQuestionLocations(question.data);
+            const seekerPoint = turf.point([
+                question.data.lng,
+                question.data.lat,
+            ]);
+            const nearestQuestion = turf.nearestPoint(
+                seekerPoint,
+                seekerSearch.instances,
+            );
 
-            let radius = 30;
-
-            let instances: any = { features: [] };
-
-            const nearestPoints = [];
-
-            while (instances.features.length === 0) {
-                instances = await findTentacleLocations(
-                    {
-                        lat: station.properties.geometry.coordinates[1],
-                        lng: station.properties.geometry.coordinates[0],
-                        radius: radius,
-                        unit: "miles",
-                        locationType: question.data.type,
-                    },
-                    "Finding matching locations to hiding zone...",
-                );
-
-                const distances: any[] = await Promise.all(
+            const withDistances = (instances: any): Promise<any[]> =>
+                Promise.all(
                     instances.features.map(async (x: any) => ({
                         distance: await arcDistance(
                             turf.point(turf.getCoord(x)),
@@ -1229,30 +1221,59 @@ async function selectionProcess(
                     })),
                 );
 
-                if (distances.length === 0) {
-                    radius += 30;
-                    continue;
+            let distances = await withDistances(seekerSearch.instances);
+            let minimumPoint = _.minBy(distances, "distance");
+            const seekerToStation = await arcDistance(
+                seekerPoint,
+                station.properties,
+                "miles",
+            );
+
+            if (
+                !minimumPoint ||
+                seekerToStation +
+                    minimumPoint.distance +
+                    hidingRadiusMiles * 2 >
+                    seekerSearch.radiusMiles
+            ) {
+                let radius = 30;
+
+                while (true) {
+                    distances = await withDistances(
+                        await findTentacleLocations(
+                            {
+                                lat: station.properties.geometry.coordinates[1],
+                                lng: station.properties.geometry.coordinates[0],
+                                radius: radius,
+                                unit: "miles",
+                                locationType: question.data.type,
+                            },
+                            "Finding matching locations to hiding zone...",
+                        ),
+                    );
+                    minimumPoint = _.minBy(distances, "distance");
+
+                    if (!minimumPoint) {
+                        radius += 30;
+                    } else if (
+                        minimumPoint.distance + hidingRadiusMiles * 2 >
+                        radius
+                    ) {
+                        radius = minimumPoint.distance + hidingRadiusMiles * 2;
+                    } else {
+                        break;
+                    }
                 }
-
-                const minimumPoint = _.minBy(distances, "distance")!;
-
-                if (minimumPoint.distance + hidingRadiusMiles * 2 > radius) {
-                    radius = minimumPoint.distance + hidingRadiusMiles * 2;
-                    continue;
-                }
-
-                nearestPoints.push(
-                    ...distances
-                        .filter(
-                            (x) =>
-                                x.distance <
-                                    minimumPoint.distance +
-                                        hidingRadiusMiles * 2 &&
-                                x.point.properties.name, // If it doesn't have a name, it's not a valid location
-                        )
-                        .map((x) => x.point),
-                );
             }
+
+            const nearestPoints = distances
+                .filter(
+                    (x) =>
+                        x.distance <
+                            minimumPoint!.distance + hidingRadiusMiles * 2 &&
+                        x.point.properties.name, // If it doesn't have a name, it's not a valid location
+                )
+                .map((x) => x.point);
 
             if (question.id === "matching") {
                 const voronoi = geoSpatialVoronoi(
