@@ -1,5 +1,11 @@
 import * as turf from "@turf/turf";
-import type { Feature, MultiPolygon } from "geojson";
+import type {
+    Feature,
+    FeatureCollection,
+    LineString,
+    MultiLineString,
+    MultiPolygon,
+} from "geojson";
 import _ from "lodash";
 import osmtogeojson from "osmtogeojson";
 import { toast } from "react-toastify";
@@ -152,8 +158,32 @@ export const determineMeasuringBoundary = async (
             (question as any).cat.zoneName = zoneInfo.name;
 
             // Convert the polygon to its outline (the border)
-            const outline = turf.polygonToLine(zoneInfo.boundary);
-            return [outline];
+            const outline = turf.flatten(
+                turf.polygonToLine(zoneInfo.boundary) as FeatureCollection<
+                    LineString | MultiLineString
+                >,
+            ) as FeatureCollection<LineString>;
+
+            // Buffering a whole country's border freezes the page for minutes; only the part near the play area matters
+            const seeker = turf.point([question.lng, question.lat]);
+            const distance = Math.min(
+                ...outline.features.map((line) =>
+                    turf.pointToLineDistance(seeker, line, { units: "miles" }),
+                ),
+            );
+            const clipBox = bboxExtension(
+                [
+                    Math.min(bBox[0], question.lng),
+                    Math.min(bBox[1], question.lat),
+                    Math.max(bBox[2], question.lng),
+                    Math.max(bBox[3], question.lat),
+                ],
+                distance + 1, // Margin for the differing geodesic distances
+            );
+
+            return outline.features
+                .map((line) => turf.bboxClip(line, clipBox))
+                .filter((line) => line.geometry.coordinates.length > 0);
         }
         case "coastline": {
             const coastline = turf.lineToPolygon(
@@ -316,7 +346,8 @@ const bufferedDeterminerKey = (question: MeasuringQuestion) =>
         lng: question.lng,
         entirety: polyGeoJSON.get() ? polyGeoJSON.get() : mapGeoLocation.get(),
         geo: (question as any).geo,
-        cat: (question as any).cat,
+        // zoneName is only a label, filled in by the first determination
+        cat: _.omit((question as any).cat, "zoneName"),
     });
 
 const bufferedDeterminer = _.memoize(async (question: MeasuringQuestion) => {
