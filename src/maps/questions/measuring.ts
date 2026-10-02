@@ -29,10 +29,11 @@ import {
     holedMask,
     modifyMapData,
 } from "@/maps/geo-utils";
-import type {
-    APILocations,
-    HomeGameMeasuringQuestions,
-    MeasuringQuestion,
+import {
+    type APILocations,
+    DEFAULT_ADMIN_LEVEL,
+    type HomeGameMeasuringQuestions,
+    type MeasuringQuestion,
 } from "@/maps/schema";
 
 export interface AdminZoneInfo {
@@ -131,7 +132,8 @@ export const determineMeasuringBoundary = async (
             return [highSpeedBase(features)];
         }
         case "admin-measure": {
-            const adminLevel = (question as any).cat?.adminLevel ?? 4;
+            const adminLevel =
+                (question as any).cat?.adminLevel ?? DEFAULT_ADMIN_LEVEL;
             const zoneInfo = await findAdminZoneInfo(
                 question.lat,
                 question.lng,

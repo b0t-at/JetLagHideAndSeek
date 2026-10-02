@@ -405,6 +405,10 @@ export const ZoneSidebar = () => {
                         nearestPoint as any,
                         "miles",
                     );
+                    const hidingRadiusMiles = hidingRadiusInMiles(
+                        $hidingRadius,
+                        $hidingRadiusUnits,
+                    );
 
                     const eligibleCircles = await Promise.all(
                         circles.map(async (circle) => {
@@ -422,8 +426,9 @@ export const ZoneSidebar = () => {
                             );
 
                             return question.data.hiderCloser
-                                ? stationDistance < distance + $hidingRadius
-                                : stationDistance > distance - $hidingRadius;
+                                ? stationDistance < distance + hidingRadiusMiles
+                                : stationDistance >
+                                      distance - hidingRadiusMiles;
                         }),
                     );
                     circles = circles.filter(
@@ -450,6 +455,7 @@ export const ZoneSidebar = () => {
         $displayHidingZones,
         $displayHidingZonesOptions,
         $hidingRadius,
+        $hidingRadiusUnits,
         useCustomStations,
         includeDefaultStations,
         $customStations,
@@ -472,7 +478,7 @@ export const ZoneSidebar = () => {
                     stations,
                     showGeoJSON,
                     $questionFinishedMapData,
-                    $hidingRadius,
+                    hidingRadiusInMiles($hidingRadius, $hidingRadiusUnits),
                 ).catch((error) => {
                     console.log("Error in hiding zone selection:", error);
                     toast.error(
@@ -501,6 +507,7 @@ export const ZoneSidebar = () => {
         $displayHidingZones,
         $displayHidingZonesStyle,
         $hidingRadius,
+        $hidingRadiusUnits,
         $questionFinishedMapData,
         hidingZoneModeStationID,
         stations,
@@ -1128,13 +1135,19 @@ function styleStations(
     }
 }
 
+/** The distance checks below work in miles; invalid input (e.g. a cleared field) counts as 0 */
+const hidingRadiusInMiles = (radius: number, units: turf.Units) =>
+    Number.isFinite(radius) && radius >= 0
+        ? turf.convertLength(radius, units, "miles")
+        : 0;
+
 async function selectionProcess(
     station: any,
     map: L.Map,
     stations: any[],
     showGeoJSON: (geoJSONData: any) => void,
     $questionFinishedMapData: any,
-    $hidingRadius: number,
+    hidingRadiusMiles: number,
 ) {
     const bbox = turf.bbox(station);
 
@@ -1209,8 +1222,8 @@ async function selectionProcess(
 
                 const minimumPoint = _.minBy(distances, "distance")!;
 
-                if (minimumPoint.distance + $hidingRadius * 2 > radius) {
-                    radius = minimumPoint.distance + $hidingRadius * 2;
+                if (minimumPoint.distance + hidingRadiusMiles * 2 > radius) {
+                    radius = minimumPoint.distance + hidingRadiusMiles * 2;
                     continue;
                 }
 
@@ -1219,7 +1232,8 @@ async function selectionProcess(
                         .filter(
                             (x) =>
                                 x.distance <
-                                    minimumPoint.distance + $hidingRadius * 2 &&
+                                    minimumPoint.distance +
+                                        hidingRadiusMiles * 2 &&
                                 x.point.properties.name, // If it doesn't have a name, it's not a valid location
                         )
                         .map((x) => x.point),
@@ -1308,7 +1322,7 @@ async function selectionProcess(
                             station.properties.geometry,
                             x.properties.geometry,
                         )) <
-                        distance + 1.61 * $hidingRadius,
+                        distance + 1.61 * hidingRadiusMiles,
                 ),
             );
             const circles = stations
@@ -1352,7 +1366,7 @@ async function selectionProcess(
                             station.properties.geometry,
                             "miles",
                         )) <
-                        distance + $hidingRadius,
+                        distance + hidingRadiusMiles,
                 ),
             );
             const filtered = points.features.filter(

@@ -1,4 +1,5 @@
 import { useStore } from "@nanostores/react";
+import * as turf from "@turf/turf";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 
@@ -55,7 +56,7 @@ import {
     uploadToPastebin,
 } from "@/lib/utils";
 import { OVERPASS_HOSTS } from "@/maps/api/constants";
-import { questionsSchema } from "@/maps/schema";
+import { questionsSchema, type Units } from "@/maps/schema";
 
 import { LatitudeLongitude } from "./LatLngPicker";
 import { Button } from "./ui/button";
@@ -75,6 +76,20 @@ const HIDING_ZONE_URL_PARAM = "hz";
 const HIDING_ZONE_COMPRESSED_URL_PARAM = "hzc";
 const PASTEBIN_URL_PARAM = "pb";
 const FETCH_URL_PARAM = "url";
+
+/** Converts a hiding radius between units, rounded so the input stays readable */
+const convertHidingRadius = (radius: number, from: Units, to: Units) =>
+    from === to || !Number.isFinite(radius) || radius < 0
+        ? radius
+        : Math.round(turf.convertLength(radius, from, to) * 1000) / 1000;
+
+/** Switches the hiding radius unit while keeping the same real-world distance */
+const setHidingRadiusUnits = (unit: Units) => {
+    hidingRadius.set(
+        convertHidingRadius(hidingRadius.get(), hidingRadiusUnits.get(), unit),
+    );
+    hidingRadiusUnits.set(unit);
+};
 
 export const OptionDrawers = ({ className }: { className?: string }) => {
     useStore(triggerLocalRefresh);
@@ -106,10 +121,10 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
         if (!hasSyncedInitialUnit.current) {
             hasSyncedInitialUnit.current = true;
             if (hidingRadiusUnits.get() !== currentDefault) {
-                hidingRadiusUnits.set(currentDefault);
+                setHidingRadiusUnits(currentDefault);
             }
         } else if (lastDefaultUnit.current !== currentDefault) {
-            hidingRadiusUnits.set(currentDefault);
+            setHidingRadiusUnits(currentDefault);
         }
 
         lastDefaultUnit.current = currentDefault;
@@ -269,15 +284,19 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                 }
             }
 
-            if (
-                geojson.disabledStations !== null &&
-                geojson.disabledStations.constructor === Array
-            ) {
+            if (Array.isArray(geojson.disabledStations)) {
                 disabledStations.set(geojson.disabledStations);
             }
 
-            if (geojson.hidingRadius !== null) {
-                hidingRadius.set(geojson.hidingRadius);
+            if (typeof geojson.hidingRadius === "number") {
+                hidingRadius.set(
+                    convertHidingRadius(
+                        geojson.hidingRadius,
+                        // Shares from before hidingRadiusUnits existed were always in miles
+                        geojson.hidingRadiusUnits ?? "miles",
+                        hidingRadiusUnits.get(),
+                    ),
+                );
             }
 
             if (geojson.zoneOptions) {

@@ -186,12 +186,12 @@ export const determineMatchingBoundary = _.memoize(
                 boundary = turf.featureCollection(
                     osmtogeojson(
                         await findPlacesInZone(
-                            `[admin_level=${question.cat.adminLevel}]["name:en"~"^${letter}.+"]`, // Regex is faster than filtering afterward
+                            `[boundary=administrative][admin_level=${question.cat.adminLevel}]["name:en"~"^${letter}.+"]`, // Regex is faster than filtering afterward
                             `Finding zones that start with the same letter (${letter})...`,
                             "relation",
                             "geom",
                             [
-                                `[admin_level=${question.cat.adminLevel}]["name"~"^${letter}.+"]`,
+                                `[boundary=administrative][admin_level=${question.cat.adminLevel}]["name"~"^${letter}.+"]`,
                             ], // Regex is faster than filtering afterward
                         ),
                     ).features.filter(
@@ -203,9 +203,11 @@ export const determineMatchingBoundary = _.memoize(
                 );
 
                 // It's either simplify or crash. Technically this could be bad if someone's hiding zone was inside multiple zones, but that's unlikely.
+                // 0.001° is ~100 m, too coarse for small zones such as Vienna's Bezirke
                 boundary = safeUnion(
                     turf.simplify(boundary, {
-                        tolerance: 0.001,
+                        tolerance:
+                            question.cat.adminLevel >= 8 ? 0.0001 : 0.001,
                         highQuality: true,
                         mutate: true,
                     }),

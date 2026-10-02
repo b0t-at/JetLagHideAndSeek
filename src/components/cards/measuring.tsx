@@ -29,6 +29,7 @@ import {
     findAdminZoneInfo,
 } from "@/maps/questions/measuring";
 import {
+    DEFAULT_ADMIN_LEVEL,
     determineUnionizedStrings,
     type MeasuringQuestion,
     measuringQuestionSchema,
@@ -81,15 +82,18 @@ export const MeasuringQuestionComponent = ({
                                 6: "OSM Zone 6",
                                 7: "OSM Zone 7",
                                 8: "OSM Zone 8",
-                                9: "OSM Zone 9",
+                                9: "OSM Zone 9 (district in Vienna)",
                                 10: "OSM Zone 10",
                             }}
                             value={(
-                                (data as any).cat?.adminLevel ?? 4
+                                (data as any).cat?.adminLevel ??
+                                DEFAULT_ADMIN_LEVEL
                             ).toString()}
                             onValueChange={(value) => {
                                 if (!(data as any).cat) {
-                                    (data as any).cat = { adminLevel: 4 };
+                                    (data as any).cat = {
+                                        adminLevel: DEFAULT_ADMIN_LEVEL,
+                                    };
                                 }
                                 (data as any).cat.adminLevel = parseInt(
                                     value,
@@ -317,7 +321,9 @@ export const MeasuringQuestionComponent = ({
                             return;
                         }
                         if (value === "admin-measure" && !(data as any).cat) {
-                            (data as any).cat = { adminLevel: 4 };
+                            (data as any).cat = {
+                                adminLevel: DEFAULT_ADMIN_LEVEL,
+                            };
                         }
                         data.type = value;
                         questionModified();
@@ -376,7 +382,7 @@ export const MeasuringQuestionComponent = ({
 const AdminZoneNameDisplay = ({ data }: { data: MeasuringQuestion }) => {
     useStore(triggerLocalRefresh);
 
-    const adminLevel = (data as any).cat?.adminLevel ?? 4;
+    const adminLevel = (data as any).cat?.adminLevel ?? DEFAULT_ADMIN_LEVEL;
     const zoneInfo = use(findAdminZoneInfo(data.lat, data.lng, adminLevel));
 
     // Update the zone name in the data

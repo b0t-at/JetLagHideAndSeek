@@ -29,6 +29,7 @@ import {
     findMatchingPlaces,
 } from "@/maps/questions/matching";
 import {
+    DEFAULT_ADMIN_LEVEL,
     determineUnionizedStrings,
     type MatchingQuestion,
     matchingQuestionSchema,
@@ -85,7 +86,7 @@ export const MatchingQuestionComponent = ({
                                 6: "OSM Zone 6",
                                 7: "OSM Zone 7",
                                 8: "OSM Zone 8",
-                                9: "OSM Zone 9",
+                                9: "OSM Zone 9 (district in Vienna)",
                                 10: "OSM Zone 10",
                             }}
                             value={data.cat.adminLevel.toString()}
@@ -109,8 +110,10 @@ export const MatchingQuestionComponent = ({
                     {data.type === "letter-zone" && (
                         <span className="px-2 text-center text-orange-500">
                             Warning: The zone data has been simplified by
-                            &plusmn;360 feet (100 meters) in order for the
-                            browser to not crash.
+                            {data.cat.adminLevel >= 8
+                                ? " ±36 feet (10 meters) "
+                                : " ±360 feet (100 meters) "}
+                            in order for the browser to not crash.
                         </span>
                     )}
                 </>
@@ -347,7 +350,9 @@ export const MatchingQuestionComponent = ({
                             }
                             // The category should be defined such that no error is thrown if this is a zone question.
                             if (!(data as any).cat) {
-                                (data as any).cat = { adminLevel: 3 };
+                                (data as any).cat = {
+                                    adminLevel: DEFAULT_ADMIN_LEVEL,
+                                };
                             }
                             questionModified((data.type = value));
                             return;
@@ -360,7 +365,9 @@ export const MatchingQuestionComponent = ({
 
                         // The category should be defined such that no error is thrown if this is a zone question.
                         if (!(data as any).cat) {
-                            (data as any).cat = { adminLevel: 3 };
+                            (data as any).cat = {
+                                adminLevel: DEFAULT_ADMIN_LEVEL,
+                            };
                         }
                         questionModified((data.type = value));
                     }}

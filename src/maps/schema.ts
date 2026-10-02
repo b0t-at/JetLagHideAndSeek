@@ -5,6 +5,8 @@ import { defaultUnit } from "@/lib/context";
 import { ICON_COLORS } from "./api/constants";
 
 export const NO_GROUP = "NO_GROUP";
+/** OSM admin level 9 = the 23 Bezirke in Vienna */
+export const DEFAULT_ADMIN_LEVEL = 9;
 
 export const determineUnionizedStrings = (
     obj: z.ZodUnion<any> | z.ZodLiteral<any> | z.ZodDefault<any>,
@@ -270,7 +272,9 @@ const zoneMatchingQuestionsSchema = baseMatchingQuestionSchema.extend({
                 z.literal(10),
             ]),
         })
-        .default(() => ({ adminLevel: 3 }) as { adminLevel: 3 }),
+        .default(
+            () => ({ adminLevel: DEFAULT_ADMIN_LEVEL }) as { adminLevel: 9 },
+        ),
 });
 
 const homeGameMatchingQuestionsSchema = baseMatchingQuestionSchema.extend({
