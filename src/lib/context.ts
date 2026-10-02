@@ -397,7 +397,7 @@ export const allowGooglePlusCodes = persistentAtom<boolean>(
 
 export const overpassHost = persistentAtom<string>(
     "overpassHost",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
 );
 export const overpassCustomHost = persistentAtom<string>(
     "overpassCustomHost",
