@@ -1,88 +1,140 @@
 import "leaflet/dist/leaflet.css";
 import "leaflet-contextmenu/dist/leaflet.contextmenu.css";
-import { MapContainer, ScaleControl, TileLayer } from "react-leaflet";
-import { geoJSON, type Map as LeafletMap } from "leaflet";
 import "leaflet-contextmenu";
-import { cn } from "../lib/utils";
+
+import { useStore } from "@nanostores/react";
+import * as turf from "@turf/turf";
+import * as L from "leaflet";
+import { useEffect, useMemo } from "react";
+import { MapContainer, ScaleControl, TileLayer } from "react-leaflet";
+import { toast } from "react-toastify";
+
 import {
+    additionalMapGeoLocations,
+    addQuestion,
+    animateMapMovements,
+    autoZoom,
+    baseTileLayer,
+    followMe,
+    hiderMode,
+    isLoading,
     leafletMapContext,
     mapGeoJSON,
     mapGeoLocation,
-    polyGeoJSON,
-    questions,
-    highlightTrainLines,
-    hiderMode,
-    triggerLocalRefresh,
-    questionFinishedMapData,
-    animateMapMovements,
-    addQuestion,
+    permanentOverlay,
     planningModeEnabled,
-    isLoading,
-} from "../lib/context";
-import { useStore } from "@nanostores/react";
-import { useEffect, useMemo } from "react";
-import { toast } from "react-toastify";
-import * as turf from "@turf/turf";
-import { clearCache, determineGeoJSON, type OpenStreetMap } from "../maps/api";
-import { adjustPerRadius, radiusPlanningPolygon } from "../maps/radius";
-import { DraggableMarkers } from "./DraggableMarkers";
-import {
-    adjustPerThermometer,
-    thermometerPlanningPolygon,
-} from "../maps/thermometer";
-import { adjustPerTentacle, tentaclesPlanningPolygon } from "../maps/tentacles";
-import { adjustPerMatching, matchingPlanningPolygon } from "../maps/matching";
-import { PolygonDraw } from "./PolygonDraw";
-import { adjustPerMeasuring, measuringPlanningPolygon } from "@/maps/measuring";
-import { LeafletFullScreenButton } from "./LeafletFullScreenButton";
+    polyGeoJSON,
+    questionFinishedMapData,
+    questions,
+    thunderforestApiKey,
+    triggerLocalRefresh,
+} from "@/lib/context";
+import { cn } from "@/lib/utils";
+import { applyQuestionsToMapGeoData, holedMask } from "@/maps";
 import { hiderifyQuestion } from "@/maps";
-import { holedMask } from "@/maps/geo-utils";
+import { clearCache, determineMapBoundaries } from "@/maps/api";
+
+import { DraggableMarkers } from "./DraggableMarkers";
+import { LeafletFullScreenButton } from "./LeafletFullScreenButton";
 import { MapPrint } from "./MapPrint";
+import { PolygonDraw } from "./PolygonDraw";
 
-export const refreshMapData = (
-    $mapGeoLocation: OpenStreetMap,
-    screen: boolean = true,
-    map?: LeafletMap,
-) => {
-    const refresh = async () => {
-        const mapGeoData = await determineGeoJSON(
-            $mapGeoLocation.properties.osm_id.toString(),
-            $mapGeoLocation.properties.osm_type,
-        );
+const getTileLayer = (tileLayer: string, thunderforestApiKey: string) => {
+    switch (tileLayer) {
+        case "light":
+            return (
+                <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="https://carto.com/attributions">CARTO</a>; Powered by Esri and Turf.js'
+                    url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_2hdi_1_0b36dd202687c7d7c2b90861"
+                    subdomains="abcd"
+                    maxZoom={20} // This technically should be 6, but once the ratelimiting starts this can take over
+                    minZoom={2}
+                    noWrap
+                />
+            );
 
-        if (turf.coordAll(mapGeoData).length > 10000) {
-            turf.simplify(mapGeoData, {
-                tolerance: 0.0005,
-                highQuality: true,
-                mutate: true,
-            });
-        }
+        case "dark":
+            return (
+                <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="https://carto.com/attributions">CARTO</a>; Powered by Esri and Turf.js'
+                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2hdi_1_0b36dd202687c7d7c2b90861"
+                    subdomains="abcd"
+                    maxZoom={20} // This technically should be 6, but once the ratelimiting starts this can take over
+                    minZoom={2}
+                    noWrap
+                />
+            );
 
-        mapGeoJSON.set(mapGeoData);
+        case "transport":
+            if (thunderforestApiKey)
+                return (
+                    <TileLayer
+                        url={`https://tile.thunderforest.com/transport/{z}/{x}/{y}.png?apikey=${thunderforestApiKey}`}
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="http://www.thunderforest.com/">Thunderforest</a>; Powered by Esri and Turf.js'
+                        maxZoom={22}
+                        minZoom={2}
+                        noWrap
+                    />
+                );
+            break;
 
-        if (screen) {
-            if (!map) return;
-            focusMap(map, mapGeoData);
-        }
+        case "neighbourhood":
+            if (thunderforestApiKey)
+                return (
+                    <TileLayer
+                        url={`https://tile.thunderforest.com/neighbourhood/{z}/{x}/{y}.png?apikey=${thunderforestApiKey}`}
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="http://www.thunderforest.com/">Thunderforest</a>; Powered by Esri and Turf.js'
+                        maxZoom={22}
+                        minZoom={2}
+                        noWrap
+                    />
+                );
+            break;
 
-        return mapGeoData;
-    };
+        case "osmcarto":
+            return (
+                <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; Powered by Esri and Turf.js'
+                    url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    maxZoom={19}
+                    minZoom={2}
+                    noWrap
+                />
+            );
+    }
 
-    return toast.promise(
-        refresh().catch((error) => console.log(error)),
-        {
-            error: "Error refreshing map data",
-        },
+    return (
+        <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; &copy; <a href="https://carto.com/attributions">CARTO</a>; Powered by Esri and Turf.js'
+            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_2hdi_1_0b36dd202687c7d7c2b90861"
+            subdomains="abcd"
+            maxZoom={20} // This technically should be 6, but once the ratelimiting starts this can take over
+            minZoom={2}
+            noWrap
+        />
     );
 };
 
 export const Map = ({ className }: { className?: string }) => {
+    useStore(additionalMapGeoLocations);
     const $mapGeoLocation = useStore(mapGeoLocation);
     const $questions = useStore(questions);
-    const $highlightTrainLines = useStore(highlightTrainLines);
+    const $baseTileLayer = useStore(baseTileLayer);
+    const $thunderforestApiKey = useStore(thunderforestApiKey);
     const $hiderMode = useStore(hiderMode);
     const $isLoading = useStore(isLoading);
+    const $followMe = useStore(followMe);
+    const $permanentOverlay = useStore(permanentOverlay);
     const map = useStore(leafletMapContext);
+
+    const followMeMarkerRef = useMemo(
+        () => ({ current: null as L.Marker | null }),
+        [],
+    );
+    const geoWatchIdRef = useMemo(
+        () => ({ current: null as number | null }),
+        [],
+    );
 
     const refreshQuestions = async (focus: boolean = false) => {
         if (!map) return;
@@ -103,7 +155,17 @@ export const Map = ({ className }: { className?: string }) => {
                 mapGeoData = polyGeoData;
                 mapGeoJSON.set(polyGeoData);
             } else {
-                mapGeoData = await refreshMapData($mapGeoLocation, false, map);
+                await toast.promise(
+                    determineMapBoundaries()
+                        .then((x) => {
+                            mapGeoJSON.set(x);
+                            mapGeoData = x;
+                        })
+                        .catch((error) => console.log(error)),
+                    {
+                        error: "Error refreshing map data",
+                    },
+                );
             }
         }
 
@@ -122,230 +184,22 @@ export const Map = ({ className }: { className?: string }) => {
         });
 
         try {
-            for (let index = 0; index < $questions.length; index++) {
-                const question = $questions[index];
-
-                switch (question?.id) {
-                    case "radius":
-                        if (question.data.drag && planningModeEnabled.get()) {
-                            const geoJSONObj = radiusPlanningPolygon(
-                                question.data,
-                            );
-                            const geoJSONPlane = geoJSON(geoJSONObj);
-                            // @ts-expect-error This is a check such that only this type of layer is removed
-                            geoJSONPlane.questionKey = question.key;
-                            geoJSONPlane.addTo(map);
-                        }
-                        if (planningModeEnabled.get() && question.data.drag) {
-                            break;
-                        }
-                        if (!question.data.within) break;
-                        mapGeoData = adjustPerRadius(
-                            question.data,
-                            mapGeoData,
-                            false,
-                        );
-                        break;
-                    case "thermometer":
-                        if (question.data.drag && planningModeEnabled.get()) {
-                            const geoJSONObj = thermometerPlanningPolygon(
-                                question.data,
-                            );
-                            const geoJSONPlane = geoJSON(geoJSONObj);
-                            // @ts-expect-error This is a check such that only this type of layer is removed
-                            geoJSONPlane.questionKey = question.key;
-                            geoJSONPlane.addTo(map);
-                        }
-                        if (planningModeEnabled.get() && question.data.drag) {
-                            break;
-                        }
-
-                        mapGeoData = adjustPerThermometer(
-                            question.data,
-                            mapGeoData,
-                            false,
-                        );
-                        break;
-                    case "tentacles":
-                        if (question.data.drag && planningModeEnabled.get()) {
-                            const geoJSONObj = await tentaclesPlanningPolygon(
-                                question.data,
-                            );
-                            const geoJSONPlane = geoJSON(geoJSONObj);
-                            // @ts-expect-error This is a check such that only this type of layer is removed
-                            geoJSONPlane.questionKey = question.key;
-                            geoJSONPlane.addTo(map);
-                        }
-                        if (planningModeEnabled.get() && question.data.drag) {
-                            break;
-                        }
-
-                        if (question.data.location === false) break;
-                        mapGeoData = await adjustPerTentacle(
-                            question.data,
-                            mapGeoData,
-                            false,
-                        );
-                        break;
-                    case "matching":
-                        if (question.data.drag && planningModeEnabled.get()) {
-                            const geoJSONObj = await matchingPlanningPolygon(
-                                question.data,
-                            );
-
-                            if (geoJSONObj) {
-                                const geoJSONPlane = geoJSON(geoJSONObj);
-                                // @ts-expect-error This is a check such that only this type of layer is removed
-                                geoJSONPlane.questionKey = question.key;
-                                geoJSONPlane.addTo(map);
-                            }
-                        }
-                        if (planningModeEnabled.get() && question.data.drag) {
-                            break;
-                        }
-
-                        try {
-                            mapGeoData = await adjustPerMatching(
-                                question.data,
-                                mapGeoData,
-                                false,
-                            );
-                        } catch (error: any) {
-                            if (error && error.message === "Must be masked") {
-                                /* empty */
-                            } else {
-                                console.log(error);
-                                throw error;
-                            }
-                        }
-                        break;
-                    case "measuring":
-                        if (question.data.drag && planningModeEnabled.get()) {
-                            const geoJSONObj = await measuringPlanningPolygon(
-                                question.data,
-                            );
-
-                            if (geoJSONObj) {
-                                const geoJSONPlane = geoJSON(geoJSONObj);
-                                // @ts-expect-error This is a check such that only this type of layer is removed
-                                geoJSONPlane.questionKey = question.key;
-                                geoJSONPlane.addTo(map);
-                            }
-                        }
-                        if (planningModeEnabled.get() && question.data.drag) {
-                            break;
-                        }
-                        try {
-                            mapGeoData = await adjustPerMeasuring(
-                                question.data,
-                                mapGeoData,
-                                false,
-                            );
-                        } catch (error: any) {
-                            if (error && error.message === "Must be masked") {
-                                /* empty */
-                            } else {
-                                console.log(error);
-                                throw error;
-                            }
-                        }
-                        break;
-                }
-
-                if (mapGeoData.type !== "FeatureCollection") {
-                    mapGeoData = {
-                        type: "FeatureCollection",
-                        features: [mapGeoData],
-                    };
-                }
-            }
-
-            let bounds: [[number, number], [number, number]] | undefined;
-
-            if (focus) {
-                const bbox = turf.bbox(mapGeoData as any);
-                bounds = [
-                    [bbox[1], bbox[0]],
-                    [bbox[3], bbox[2]],
-                ];
-            }
+            mapGeoData = await applyQuestionsToMapGeoData(
+                $questions,
+                mapGeoData,
+                planningModeEnabled.get(),
+                (geoJSONObj, question) => {
+                    const geoJSONPlane = L.geoJSON(geoJSONObj);
+                    // @ts-expect-error This is a check such that only this type of layer is removed
+                    geoJSONPlane.questionKey = question.key;
+                    geoJSONPlane.addTo(map);
+                },
+            );
 
             mapGeoData = {
                 type: "FeatureCollection",
-                features: [holedMask(mapGeoData)],
+                features: [holedMask(mapGeoData!)!],
             };
-
-            for (let index = 0; index < $questions.length; index++) {
-                const question = $questions[index];
-
-                if (planningModeEnabled.get() && question.data.drag) {
-                    continue;
-                }
-
-                switch (question?.id) {
-                    case "radius":
-                        if (question.data.within) break;
-
-                        mapGeoData = adjustPerRadius(
-                            question.data,
-                            mapGeoData,
-                            true,
-                        );
-
-                        break;
-                    case "tentacles":
-                        if (question.data.location !== false) break;
-
-                        mapGeoData = adjustPerRadius(
-                            {
-                                ...question.data,
-                                within: false,
-                            },
-                            mapGeoData,
-                            true,
-                        );
-                        break;
-                    case "matching":
-                        try {
-                            mapGeoData = await adjustPerMatching(
-                                question.data,
-                                mapGeoData,
-                                true,
-                            );
-                        } catch (error: any) {
-                            if (error && error.message === "Cannot be masked") {
-                                /* empty */
-                            } else {
-                                console.log(error);
-                                throw error;
-                            }
-                        }
-                        break;
-                    case "measuring":
-                        try {
-                            mapGeoData = await adjustPerMeasuring(
-                                question.data,
-                                mapGeoData,
-                                true,
-                            );
-                        } catch (error: any) {
-                            if (error && error.message === "Cannot be masked") {
-                                /* empty */
-                            } else {
-                                console.log(error);
-                                throw error;
-                            }
-                        }
-                        break;
-                }
-
-                if (mapGeoData.type !== "FeatureCollection") {
-                    mapGeoData = {
-                        type: "FeatureCollection",
-                        features: [mapGeoData],
-                    };
-                }
-            }
 
             map.eachLayer((layer: any) => {
                 if (layer.eliminationGeoJSON) {
@@ -354,18 +208,24 @@ export const Map = ({ className }: { className?: string }) => {
                 }
             });
 
-            const g = geoJSON(mapGeoData);
+            const g = L.geoJSON(mapGeoData);
             // @ts-expect-error This is a check such that only this type of layer is removed
             g.eliminationGeoJSON = true;
             g.addTo(map);
 
             questionFinishedMapData.set(mapGeoData);
 
-            if (bounds) {
+            if (autoZoom.get() && focus) {
+                const bbox = turf.bbox(holedMask(mapGeoData) as any);
+                const bounds = [
+                    [bbox[1], bbox[0]],
+                    [bbox[3], bbox[2]],
+                ];
+
                 if (animateMapMovements.get()) {
-                    map.flyToBounds(bounds);
+                    map.flyToBounds(bounds as any);
                 } else {
-                    map.fitBounds(bounds);
+                    map.fitBounds(bounds as any);
                 }
             }
         } catch (error) {
@@ -461,24 +321,54 @@ export const Map = ({ className }: { className?: string }) => {
                             });
                         },
                     },
+                    {
+                        text: "Exclude Country",
+                        callback: (e: any) => {
+                            addQuestion({
+                                id: "matching",
+                                data: {
+                                    lat: e.latlng.lat,
+                                    lng: e.latlng.lng,
+                                    same: false,
+                                    cat: {
+                                        adminLevel: 2,
+                                    },
+                                    type: "zone",
+                                },
+                            });
+                        },
+                    },
+                    {
+                        text: "Copy Coordinates",
+                        callback: (e: any) => {
+                            if (!navigator || !navigator.clipboard) {
+                                toast.error(
+                                    "Clipboard API not supported in your browser",
+                                );
+                                return;
+                            }
+
+                            const latitude = e.latlng.lat;
+                            const longitude = e.latlng.lng;
+
+                            toast.promise(
+                                navigator.clipboard.writeText(
+                                    `${Math.abs(latitude)}°${latitude > 0 ? "N" : "S"}, ${Math.abs(
+                                        longitude,
+                                    )}°${longitude > 0 ? "E" : "W"}`,
+                                ),
+                                {
+                                    pending: "Writing to clipboard...",
+                                    success: "Coordinates copied!",
+                                    error: "An error occurred while copying",
+                                },
+                                { autoClose: 1000 },
+                            );
+                        },
+                    },
                 ]}
             >
-                <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> and <a href="http://www.thunderforest.com/">Thunderforest</a>'
-                    url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-                    subdomains="abcd"
-                    maxZoom={20} // This technically should be 6, but once the ratelimiting starts this can take over
-                    minZoom={2}
-                    noWrap
-                />
-                {$highlightTrainLines && (
-                    <TileLayer
-                        url="https://tile.thunderforest.com/transport/{z}/{x}/{y}.png?apikey=80add02166f6434d8e6dca27b0573474"
-                        maxZoom={22}
-                        minZoom={7}
-                        noWrap
-                    />
-                )}
+                {getTileLayer($baseTileLayer, $thunderforestApiKey)}
                 <DraggableMarkers />
                 <div className="leaflet-top leaflet-right">
                     <div className="leaflet-control flex-col flex gap-2">
@@ -501,7 +391,7 @@ export const Map = ({ className }: { className?: string }) => {
                 />
             </MapContainer>
         ),
-        [map, $highlightTrainLines],
+        [map, $baseTileLayer, $thunderforestApiKey],
     );
 
     useEffect(() => {
@@ -553,30 +443,93 @@ export const Map = ({ className }: { className?: string }) => {
         };
     }, []);
 
-    return displayMap;
-};
-
-export const focusMap = (map: LeafletMap, mapGeoData: any) => {
-    map.eachLayer((layer: any) => {
-        if (layer.eliminationGeoJSON) {
-            // Hopefully only geoJSON layers
-            map.removeLayer(layer);
+    useEffect(() => {
+        if (!map) return;
+        if (!$followMe) {
+            if (followMeMarkerRef.current) {
+                map.removeLayer(followMeMarkerRef.current);
+                followMeMarkerRef.current = null;
+            }
+            if (geoWatchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(geoWatchIdRef.current);
+                geoWatchIdRef.current = null;
+            }
+            return;
         }
-    });
 
-    const g = geoJSON(holedMask(mapGeoData));
-    // @ts-expect-error This is a check such that only this type of layer is removed
-    g.eliminationGeoJSON = true;
-    g.addTo(map);
+        geoWatchIdRef.current = navigator.geolocation.watchPosition(
+            (pos) => {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                if (followMeMarkerRef.current) {
+                    followMeMarkerRef.current.setLatLng([lat, lng]);
+                } else {
+                    const marker = L.marker([lat, lng], {
+                        icon: L.divIcon({
+                            html: `<div class="text-blue-700 bg-white rounded-full border-2 border-blue-700 shadow w-5 h-5 flex items-center justify-center"><svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#2A81CB" opacity="0.5"/><circle cx="8" cy="8" r="3" fill="#2A81CB"/></svg></div>`,
+                            className: "",
+                        }),
+                        zIndexOffset: 1000,
+                    });
+                    marker.addTo(map);
+                    followMeMarkerRef.current = marker;
+                }
+            },
+            () => {
+                toast.error("Unable to access your location.");
+                followMe.set(false);
+            },
+            { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
+        );
+        return () => {
+            if (followMeMarkerRef.current) {
+                map.removeLayer(followMeMarkerRef.current);
+                followMeMarkerRef.current = null;
+            }
+            if (geoWatchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(geoWatchIdRef.current);
+                geoWatchIdRef.current = null;
+            }
+        };
+    }, [$followMe, map]);
 
-    const bbox = turf.bbox(mapGeoData as any);
-    const bounds: [[number, number], [number, number]] = [
-        [bbox[1], bbox[0]],
-        [bbox[3], bbox[2]],
-    ];
-    if (animateMapMovements.get()) {
-        map.flyToBounds(bounds);
-    } else {
-        map.fitBounds(bounds);
-    }
+    useEffect(() => {
+        if (!map) return;
+
+        map.eachLayer((layer: any) => {
+            if (layer.permanentGeoJSON) map.removeLayer(layer);
+        });
+
+        if ($permanentOverlay === null) return;
+
+        try {
+            const overlay = L.geoJSON($permanentOverlay, {
+                interactive: false,
+
+                // @ts-expect-error Type hints force a Layer to be returned, but Leaflet accepts null as well
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                pointToLayer(geoJsonPoint, latlng) {
+                    return null;
+                },
+
+                style(feature) {
+                    return {
+                        color: feature?.properties?.stroke,
+                        weight: feature?.properties?.["stroke-width"],
+                        opacity: feature?.properties?.["stroke-opacity"],
+                        fillColor: feature?.properties?.fill,
+                        fillOpacity: feature?.properties?.["fill-opacity"],
+                    };
+                },
+            });
+            // @ts-expect-error This is a check such that only this type of layer is removed
+            overlay.permanentGeoJSON = true;
+            overlay.addTo(map);
+            overlay.bringToBack();
+        } catch (e) {
+            toast.error(`Failed to display GeoJSON overlay: ${e}`);
+        }
+    }, [$permanentOverlay, map]);
+
+    return displayMap;
 };

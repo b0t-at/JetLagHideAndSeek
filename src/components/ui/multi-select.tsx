@@ -1,16 +1,9 @@
-import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { CheckIcon, XCircle, ChevronDown, XIcon } from "lucide-react";
+import { CheckIcon, ChevronDown, XCircle, XIcon } from "lucide-react";
+import * as React from "react";
 
-import { cn } from "@/lib/utils";
-import { Separator } from "@/components/ui/separator";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-    Popover,
-    PopoverContent,
-    PopoverTrigger,
-} from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
 import {
     Command,
     CommandEmpty,
@@ -20,6 +13,14 @@ import {
     CommandList,
     CommandSeparator,
 } from "@/components/ui/command";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
+import { useDebounce } from "@/hooks/useDebounce";
+import { cn } from "@/lib/utils";
 
 /**
  * Variants for the multi-select component to handle different styles.
@@ -109,6 +110,12 @@ interface MultiSelectProps
      * Optional, can be used to add custom styles.
      */
     className?: string;
+
+    /**
+     * Debounce time in milliseconds for onValueChange callback.
+     * Optional, defaults to 500ms.
+     */
+    debounce?: number;
 }
 
 export const MultiSelect = React.forwardRef<
@@ -126,6 +133,7 @@ export const MultiSelect = React.forwardRef<
             maxCount = 3,
             modalPopover = false,
             className,
+            debounce = 500,
             ...props
         },
         ref,
@@ -135,6 +143,11 @@ export const MultiSelect = React.forwardRef<
         const [isPopoverOpen, setIsPopoverOpen] = React.useState(false);
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const [isAnimating, setIsAnimating] = React.useState(false);
+
+        const debouncedSelectedValues = useDebounce(selectedValues, debounce);
+        React.useEffect(() => {
+            onValueChange(debouncedSelectedValues);
+        }, [debouncedSelectedValues]);
 
         const handleInputKeyDown = (
             event: React.KeyboardEvent<HTMLInputElement>,
@@ -148,7 +161,6 @@ export const MultiSelect = React.forwardRef<
                 const newSelectedValues = [...selectedValues];
                 newSelectedValues.pop();
                 setSelectedValues(newSelectedValues);
-                onValueChange(newSelectedValues);
             }
         };
 
@@ -157,12 +169,10 @@ export const MultiSelect = React.forwardRef<
                 ? selectedValues.filter((value) => value !== option)
                 : [...selectedValues, option];
             setSelectedValues(newSelectedValues);
-            onValueChange(newSelectedValues);
         };
 
         const handleClear = () => {
             setSelectedValues([]);
-            onValueChange([]);
         };
 
         const handleTogglePopover = () => {
@@ -172,7 +182,6 @@ export const MultiSelect = React.forwardRef<
         const clearExtraOptions = () => {
             const newSelectedValues = selectedValues.slice(0, maxCount);
             setSelectedValues(newSelectedValues);
-            onValueChange(newSelectedValues);
         };
 
         const toggleAll = () => {
@@ -181,9 +190,21 @@ export const MultiSelect = React.forwardRef<
             } else {
                 const allValues = options.map((option) => option.value);
                 setSelectedValues(allValues);
-                onValueChange(allValues);
             }
         };
+
+        const _optLabels = options.map((o) => o.label);
+        const _optCounts: Record<string, number> = {};
+        _optLabels.forEach((l) => {
+            _optCounts[l] = (_optCounts[l] || 0) + 1;
+        });
+        const _optIndex: Record<string, number> = {};
+        const _optLabelByValue: Record<string, string> = {};
+        options.forEach((o) => {
+            const idx = (_optIndex[o.label] = (_optIndex[o.label] || 0) + 1);
+            _optLabelByValue[o.value] =
+                _optCounts[o.label] > 1 ? `${o.label} (${idx})` : o.label;
+        });
 
         return (
             <Popover
@@ -349,7 +370,11 @@ export const MultiSelect = React.forwardRef<
                                             {option.icon && (
                                                 <option.icon className="mr-2 h-4 w-4 text-muted-foreground" />
                                             )}
-                                            <span>{option.label}</span>
+                                            <span>
+                                                {_optLabelByValue[
+                                                    option.value
+                                                ] || option.label}
+                                            </span>
                                         </CommandItem>
                                     );
                                 })}

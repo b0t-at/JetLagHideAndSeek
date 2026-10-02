@@ -1,37 +1,43 @@
-import { LatitudeLongitude } from "../LatLngPicker";
 import { useStore } from "@nanostores/react";
-import { cn } from "../../lib/utils";
+import { point } from "@turf/turf";
+import { useEffect, useState } from "react";
+
+import { LatitudeLongitude } from "@/components/LatLngPicker";
+import { Label } from "@/components/ui/label";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { defaultUnit } from "@/lib/context";
 import {
     hiderMode,
+    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
-    isLoading,
-} from "../../lib/context";
-import { iconColors } from "../../maps/api";
-import { MENU_ITEM_CLASSNAME, SidebarMenuItem } from "../ui/sidebar-l";
-import { Checkbox } from "../ui/checkbox";
-import { Separator } from "../ui/separator";
+} from "@/lib/context";
+import { cn } from "@/lib/utils";
+import { arcDistance } from "@/maps/geo-utils";
+import type { ThermometerQuestion } from "@/maps/schema";
+
 import { QuestionCard } from "./base";
-import type { ThermometerQuestion } from "@/lib/schema";
 
 export const ThermometerQuestionComponent = ({
     data,
     questionKey,
     sub,
     className,
-    showDeleteButton = true,
 }: {
     data: ThermometerQuestion;
     questionKey: number;
     sub?: string;
     className?: string;
-    showDeleteButton?: boolean;
 }) => {
     useStore(triggerLocalRefresh);
     const $hiderMode = useStore(hiderMode);
     const $questions = useStore(questions);
     const $isLoading = useStore(isLoading);
+
+    const $defaultUnit = useStore(defaultUnit);
+    const DISTANCE_UNIT = $defaultUnit ?? "miles";
+
     const label = `Thermometer
     ${
         $questions
@@ -40,91 +46,114 @@ export const ThermometerQuestionComponent = ({
             .indexOf(questionKey) + 1
     }`;
 
+    const hasCoords =
+        data.latA !== null &&
+        data.lngA !== null &&
+        data.latB !== null &&
+        data.lngB !== null;
+    const [distanceValue, setDistanceValue] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (!hasCoords) {
+            setDistanceValue(null);
+            return;
+        }
+
+        let cancelled = false;
+        arcDistance(
+            point([data.lngA!, data.latA!]),
+            point([data.lngB!, data.latB!]),
+            DISTANCE_UNIT,
+        ).then((distance) => {
+            if (!cancelled) setDistanceValue(distance);
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [data.latA, data.lngA, data.latB, data.lngB, DISTANCE_UNIT, hasCoords]);
+
+    const unitLabel =
+        DISTANCE_UNIT === "meters"
+            ? "Meters"
+            : DISTANCE_UNIT === "kilometers"
+              ? "KM"
+              : "Miles";
+
     return (
         <QuestionCard
             questionKey={questionKey}
             label={label}
             sub={sub}
             className={className}
-            showDeleteButton={showDeleteButton}
+            collapsed={data.collapsed}
+            setCollapsed={(collapsed) => {
+                data.collapsed = collapsed;
+            }}
+            locked={!data.drag}
+            setLocked={(locked) => questionModified((data.drag = !locked))}
+            hidden={data.hidden}
+            setHidden={(hidden) => questionModified((data.hidden = hidden))}
         >
-            <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
-                <label className="text-2xl font-semibold font-poppins">
-                    Warmer
-                </label>
-                <Checkbox
-                    disabled={!!$hiderMode || !data.drag || $isLoading}
-                    checked={data.warmer}
-                    onCheckedChange={(checked) =>
-                        questionModified((data.warmer = checked as boolean))
-                    }
-                />
-            </SidebarMenuItem>
-            <SidebarMenuItem
-                className={cn(
-                    MENU_ITEM_CLASSNAME,
-                    "text-xl font-semibold font-poppins",
-                )}
-                style={{
-                    backgroundColor: iconColors[data.colorA],
-                    color: data.colorA === "gold" ? "black" : undefined,
-                }}
-            >
-                Color start (lock{" "}
-                <Checkbox
-                    checked={!data.drag}
-                    disabled={$isLoading}
-                    onCheckedChange={(checked) =>
-                        questionModified((data.drag = !checked as boolean))
-                    }
-                />
-                )
-            </SidebarMenuItem>
             <LatitudeLongitude
                 latitude={data.latA}
                 longitude={data.lngA}
-                latLabel="Latitude Start"
-                lngLabel="Longitude Start"
+                label="Start"
+                colorName={data.colorA}
                 onChange={(lat, lng) => {
-                    if (lat !== null) {
-                        data.latA = lat;
-                    }
-                    if (lng !== null) {
-                        data.lngA = lng;
-                    }
+                    if (lat !== null) data.latA = lat;
+                    if (lng !== null) data.lngA = lng;
                     questionModified();
                 }}
                 disabled={!data.drag || $isLoading}
             />
-            <Separator className="my-2" />
-            <SidebarMenuItem
-                className={cn(
-                    MENU_ITEM_CLASSNAME,
-                    "text-xl font-semibold font-poppins",
-                )}
-                style={{
-                    backgroundColor: iconColors[data.colorB],
-                    color: data.colorB === "gold" ? "black" : undefined,
-                }}
-            >
-                Color end
-            </SidebarMenuItem>
+
             <LatitudeLongitude
                 latitude={data.latB}
                 longitude={data.lngB}
-                latLabel="Latitude End"
-                lngLabel="Longitude End"
+                label="End"
+                colorName={data.colorB}
                 onChange={(lat, lng) => {
-                    if (lat !== null) {
-                        data.latB = lat;
-                    }
-                    if (lng !== null) {
-                        data.lngB = lng;
-                    }
+                    if (lat !== null) data.latB = lat;
+                    if (lng !== null) data.lngB = lng;
                     questionModified();
                 }}
                 disabled={!data.drag || $isLoading}
             />
+
+            {distanceValue !== null && (
+                <div className="px-2 text-sm text-muted-foreground">
+                    Distance:{" "}
+                    <span className="font-medium text-foreground">
+                        {distanceValue.toFixed(3)} {unitLabel}
+                    </span>
+                </div>
+            )}
+
+            <div className="flex gap-2 items-center p-2">
+                <Label
+                    className={cn(
+                        "font-semibold text-lg",
+                        $isLoading && "text-muted-foreground",
+                    )}
+                >
+                    Result
+                </Label>
+                <ToggleGroup
+                    className="grow"
+                    type="single"
+                    value={data.warmer ? "warmer" : "colder"}
+                    onValueChange={(value: "warmer" | "colder") =>
+                        questionModified((data.warmer = value === "warmer"))
+                    }
+                    disabled={!!$hiderMode || !data.drag || $isLoading}
+                >
+                    <ToggleGroupItem color="red" value="colder">
+                        Colder
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="warmer">Warmer</ToggleGroupItem>
+                </ToggleGroup>
+            </div>
         </QuestionCard>
     );
 };

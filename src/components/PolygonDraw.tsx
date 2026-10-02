@@ -1,9 +1,18 @@
 import "leaflet-draw/dist/leaflet.draw.css";
+
+import { useStore } from "@nanostores/react";
+import * as turf from "@turf/turf";
+import type {
+    FeatureCollection,
+    MultiPolygon,
+    Polygon as GeoJSONPolygon,
+} from "geojson";
+import * as L from "leaflet";
+import _ from "lodash";
+import { useEffect, useRef, useState } from "react";
 import { FeatureGroup, Marker, Polygon, Polyline } from "react-leaflet";
 import { EditControl } from "react-leaflet-draw";
-import * as L from "leaflet";
-import { useEffect, useRef, useState } from "react";
-import * as turf from "@turf/turf";
+
 import {
     autoSave,
     drawingQuestionKey,
@@ -14,18 +23,17 @@ import {
     save,
 } from "@/lib/context";
 import { CacheType, clearCache } from "@/maps/api";
-import { useStore } from "@nanostores/react";
+import { lngLatToText } from "@/maps/geo-utils";
 import type {
     CustomMatchingQuestion,
     CustomMeasuringQuestion,
     CustomTentacleQuestion,
     Question,
-} from "@/lib/schema";
-import { lngLatToText } from "@/maps/geo-utils";
-import { Dialog, DialogContent } from "./ui/dialog";
-import _ from "lodash";
-import { Input } from "./ui/input";
+} from "@/maps/schema";
+
 import { LatitudeLongitude } from "./LatLngPicker";
+import { Dialog, DialogContent } from "./ui/dialog";
+import { Input } from "./ui/input";
 import {
     SidebarMenu,
     SidebarMenuButton,
@@ -83,6 +91,7 @@ const TentacleMarker = ({
                         <LatitudeLongitude
                             latitude={point.geometry.coordinates[1]}
                             longitude={point.geometry.coordinates[0]}
+                            inlineEdit
                             onChange={(lat, lng) => {
                                 if (lat) {
                                     point.geometry.coordinates[1] = lat;
@@ -140,6 +149,7 @@ const MatchingPointMarker = ({
                         <LatitudeLongitude
                             latitude={point.geometry.coordinates[1]}
                             longitude={point.geometry.coordinates[0]}
+                            inlineEdit
                             onChange={(lat, lng) => {
                                 if (lat) {
                                     point.geometry.coordinates[1] = lat;
@@ -197,6 +207,7 @@ const MeasuringPointMarker = ({
                         <LatitudeLongitude
                             latitude={point.geometry.coordinates[1]}
                             longitude={point.geometry.coordinates[0]}
+                            inlineEdit
                             onChange={(lat, lng) => {
                                 if (lat) {
                                     point.geometry.coordinates[1] = lat;
@@ -259,7 +270,9 @@ export const PolygonDraw = () => {
             const geoJSONs = Object.values(layers).map((layer: any) =>
                 layer.toGeoJSON(),
             );
-            const geoJSON = turf.featureCollection(geoJSONs);
+            const geoJSON = turf.featureCollection(
+                geoJSONs,
+            ) as FeatureCollection<GeoJSONPolygon | MultiPolygon>;
 
             mapGeoJSON.set(geoJSON);
             polyGeoJSON.set(geoJSON);

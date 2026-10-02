@@ -1,8 +1,10 @@
-import { Icon, type DragEndEvent } from "leaflet";
-import { Marker } from "react-leaflet";
-import { Fragment } from "react/jsx-runtime";
-import type { iconColors } from "../maps/api";
 import { useStore } from "@nanostores/react";
+import { type DragEndEvent, Icon } from "leaflet";
+import { useState } from "react";
+import { Fragment } from "react/jsx-runtime";
+import { Marker } from "react-leaflet";
+
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
     autoSave,
     hiderMode,
@@ -10,19 +12,19 @@ import {
     questions,
     save,
     triggerLocalRefresh,
-} from "../lib/context";
+} from "@/lib/context";
+import type { ICON_COLORS } from "@/maps/api";
+
+import { LatitudeLongitude } from "./LatLngPicker";
 import {
-    RadiusQuestionComponent,
-    ThermometerQuestionComponent,
-    TentacleQuestionComponent,
     MatchingQuestionComponent,
     MeasuringQuestionComponent,
+    RadiusQuestionComponent,
+    TentacleQuestionComponent,
+    ThermometerQuestionComponent,
 } from "./QuestionCards";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { useState } from "react";
 import { Button } from "./ui/button";
 import { SidebarMenu } from "./ui/sidebar-l";
-import { LatitudeLongitude } from "./LatLngPicker";
 
 let isDragging = false;
 
@@ -37,7 +39,7 @@ const ColoredMarker = ({
     onChange: (event: DragEndEvent) => void;
     latitude: number;
     longitude: number;
-    color: keyof typeof iconColors;
+    color: keyof typeof ICON_COLORS;
     questionKey: number;
     sub?: string;
 }) => {
@@ -91,6 +93,7 @@ const ColoredMarker = ({
                             <LatitudeLongitude
                                 latitude={$hiderMode.latitude}
                                 longitude={$hiderMode.longitude}
+                                inlineEdit
                                 onChange={(latitude, longitude) => {
                                     hiderMode.set({
                                         latitude:
@@ -99,8 +102,7 @@ const ColoredMarker = ({
                                             longitude ?? $hiderMode.longitude,
                                     });
                                 }}
-                                latLabel="Hider Latitude"
-                                lngLabel="Hider Longitude"
+                                label="Hider Location"
                             />
                         </SidebarMenu>
                     </>
@@ -116,7 +118,6 @@ const ColoredMarker = ({
                                         data={q.data}
                                         questionKey={q.key}
                                         sub={sub}
-                                        showDeleteButton={false}
                                     />
                                 );
                             case "tentacles":
@@ -126,7 +127,6 @@ const ColoredMarker = ({
                                         data={q.data}
                                         questionKey={q.key}
                                         sub={sub}
-                                        showDeleteButton={false}
                                     />
                                 );
                             case "thermometer":
@@ -136,7 +136,6 @@ const ColoredMarker = ({
                                         data={q.data}
                                         questionKey={q.key}
                                         sub={sub}
-                                        showDeleteButton={false}
                                     />
                                 );
                             case "matching":
@@ -146,7 +145,6 @@ const ColoredMarker = ({
                                         data={q.data}
                                         questionKey={q.key}
                                         sub={sub}
-                                        showDeleteButton={false}
                                     />
                                 );
                             case "measuring":
@@ -156,29 +154,23 @@ const ColoredMarker = ({
                                         data={q.data}
                                         questionKey={q.key}
                                         sub={sub}
-                                        showDeleteButton={false}
                                     />
                                 );
                             default:
                                 return null;
                         }
                     })}
-
-                <Button
-                    onClick={() => {
-                        if (questionKey === -1) {
+                {questionKey === -1 && (
+                    <Button // If it's the hider mode marker
+                        onClick={() => {
                             hiderMode.set(false);
-                        } else {
-                            questions.set(
-                                $questions.filter((q) => q.key !== questionKey),
-                            );
-                        }
-                    }}
-                    variant="destructive"
-                    className="font-semibold font-poppins"
-                >
-                    {questionKey === -1 ? "Disable" : "Delete"}
-                </Button>
+                        }}
+                        variant="destructive"
+                        className="font-semibold font-poppins"
+                    >
+                        Disable
+                    </Button>
+                )}
                 {!$autoSave && (
                     <button
                         onClick={save}
@@ -226,6 +218,7 @@ export const DraggableMarkers = () => {
             {$questions.map((question) => {
                 if (!question.data) return null;
                 if (!question.data.drag) return null;
+                if (question.data.hidden) return null;
                 if (
                     question.id === "matching" &&
                     question.data.type === "custom-zone"

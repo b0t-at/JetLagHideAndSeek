@@ -1,45 +1,16 @@
-import * as turf from "@turf/turf";
-import type { FeatureCollection, Polygon, MultiPolygon } from "geojson";
-
-export const unionize = (input: FeatureCollection<Polygon | MultiPolygon>) => {
-    if (input.features.length === 1) return input.features[0];
-    const union = turf.union(input);
-    if (union) return union;
-    throw new Error("No features");
-};
-
-export const holedMask = (input: any) => {
-    input = input.features ? unionize(input) : input;
-
-    const holes = [];
-
-    if (input.geometry.type === "Polygon") {
-        input = turf.multiPolygon([input.geometry.coordinates]);
-    }
-
-    if (input.geometry.type === "MultiPolygon") {
-        for (const feature of input.geometry.coordinates) {
-            if (feature.length > 1) {
-                holes.push(...feature.slice(1));
-            }
-        }
-    }
-
-    return turf.union(
-        turf.featureCollection([
-            turf.mask(input),
-            // @ts-expect-error This made sense when I wrote it
-            turf.multiPolygon(holes.map((x) => [x])),
-        ]),
-    );
-};
-
 export const lngLatToText = (coordinates: [number, number]) => {
     /**
      * @param coordinates - Should be in longitude, latitude order
      */
     return `${Math.abs(coordinates[1])}°${coordinates[1] > 0 ? "N" : "S"}, ${Math.abs(coordinates[0])}°${coordinates[0] > 0 ? "E" : "W"}`;
 };
+
+export const extractStationName = (stationPlace: any) =>
+    stationPlace.properties["name:en"] || stationPlace.properties.name;
+
+export const extractStationLabel = (stationPlace: any) =>
+    extractStationName(stationPlace) ||
+    lngLatToText(stationPlace.geometry.coordinates);
 
 export const groupObjects = (objects: any[]): any[][] => {
     const filteredObjects = objects.filter(

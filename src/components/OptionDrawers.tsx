@@ -1,76 +1,210 @@
-import {
-    animateMapMovements,
-    autoSave,
-    defaultUnit,
-    hiderMode,
-    hidingRadius,
-    highlightTrainLines,
-    leafletMapContext,
-    mapGeoJSON,
-    mapGeoLocation,
-    polyGeoJSON,
-    questions,
-    disabledStations,
-    save,
-    triggerLocalRefresh,
-    hidingZone,
-    planningModeEnabled,
-} from "@/lib/context";
-import { Button } from "./ui/button";
+import { useStore } from "@nanostores/react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
-import { Label } from "./ui/label";
+
 import {
     Drawer,
     DrawerContent,
-    DrawerDescription,
     DrawerHeader,
     DrawerTitle,
     DrawerTrigger,
 } from "@/components/ui/drawer";
-import { Separator } from "./ui/separator";
-import { useStore } from "@nanostores/react";
-import { cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
-import { Checkbox } from "./ui/checkbox";
+import {
+    additionalMapGeoLocations,
+    allowGooglePlusCodes,
+    alwaysUsePastebin,
+    animateMapMovements,
+    autoSave,
+    autoZoom,
+    baseTileLayer,
+    customInitPreference,
+    customPresets,
+    customStations,
+    defaultCustomQuestions,
+    defaultUnit,
+    disabledStations,
+    displayHidingZonesOptions,
+    followMe,
+    hiderMode,
+    hidingRadius,
+    hidingRadiusUnits,
+    hidingZone,
+    includeDefaultStations,
+    leafletMapContext,
+    mapGeoJSON,
+    mapGeoLocation,
+    overpassCustomHost,
+    overpassHost,
+    pastebinApiKey,
+    permanentOverlay,
+    planningModeEnabled,
+    polyGeoJSON,
+    questions,
+    save,
+    showTutorial,
+    thunderforestApiKey,
+    triggerLocalRefresh,
+    useCustomStations,
+} from "@/lib/context";
+import {
+    cn,
+    compress,
+    decompress,
+    fetchFromPastebin,
+    shareOrFallback,
+    uploadToPastebin,
+} from "@/lib/utils";
+import { OVERPASS_HOSTS } from "@/maps/api/constants";
+import { questionsSchema } from "@/maps/schema";
+
 import { LatitudeLongitude } from "./LatLngPicker";
+import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Select } from "./ui/select";
+import { Separator } from "./ui/separator";
 import {
     SidebarMenu,
     SidebarMenuButton,
     SidebarMenuItem,
 } from "./ui/sidebar-l";
-import { questionsSchema } from "@/lib/schema";
 import { UnitSelect } from "./UnitSelect";
 
 const HIDING_ZONE_URL_PARAM = "hz";
+const HIDING_ZONE_COMPRESSED_URL_PARAM = "hzc";
+const PASTEBIN_URL_PARAM = "pb";
+const FETCH_URL_PARAM = "url";
 
 export const OptionDrawers = ({ className }: { className?: string }) => {
     useStore(triggerLocalRefresh);
+    const $defaultCustomQuestions = useStore(defaultCustomQuestions);
+    const $allowGooglePlusCodes = useStore(allowGooglePlusCodes);
     const $defaultUnit = useStore(defaultUnit);
-    const $highlightTrainLines = useStore(highlightTrainLines);
     const $animateMapMovements = useStore(animateMapMovements);
+    const $autoZoom = useStore(autoZoom);
     const $hiderMode = useStore(hiderMode);
-    const $hidingRadius = useStore(hidingRadius);
     const $autoSave = useStore(autoSave);
     const $hidingZone = useStore(hidingZone);
     const $planningMode = useStore(planningModeEnabled);
-    const [isInstructionsOpen, setInstructionsOpen] = useState(false);
+    const $baseTileLayer = useStore(baseTileLayer);
+    const $thunderforestApiKey = useStore(thunderforestApiKey);
+    const $pastebinApiKey = useStore(pastebinApiKey);
+    const $alwaysUsePastebin = useStore(alwaysUsePastebin);
+    const $followMe = useStore(followMe);
+    const $customInitPref = useStore(customInitPreference);
+    const $overpassHost = useStore(overpassHost);
+    const $overpassCustomHost = useStore(overpassCustomHost);
+    const lastDefaultUnit = useRef($defaultUnit);
+    const hasSyncedInitialUnit = useRef(false);
     const [isOptionsOpen, setOptionsOpen] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        const currentDefault = $defaultUnit;
+
+        if (!hasSyncedInitialUnit.current) {
+            hasSyncedInitialUnit.current = true;
+            if (hidingRadiusUnits.get() !== currentDefault) {
+                hidingRadiusUnits.set(currentDefault);
+            }
+        } else if (lastDefaultUnit.current !== currentDefault) {
+            hidingRadiusUnits.set(currentDefault);
+        }
+
+        lastDefaultUnit.current = currentDefault;
+    }, [$defaultUnit]);
 
     useEffect(() => {
         const params = new URL(window.location.toString()).searchParams;
-        const hidingZone = params.get(HIDING_ZONE_URL_PARAM);
-        if (hidingZone !== null) {
+        const hidingZoneOld = params.get(HIDING_ZONE_URL_PARAM);
+        const hidingZoneCompressed = params.get(
+            HIDING_ZONE_COMPRESSED_URL_PARAM,
+        );
+        const pastebinId = params.get(PASTEBIN_URL_PARAM);
+        const fetchUrl = params.get(FETCH_URL_PARAM);
+
+        if (hidingZoneOld !== null) {
+            // Legacy base64 encoding
             try {
-                loadHidingZone(atob(hidingZone));
+                loadHidingZone(atob(hidingZoneOld));
                 // Remove hiding zone parameter after initial load
                 window.history.replaceState({}, "", window.location.pathname);
             } catch (e) {
                 toast.error(`Invalid hiding zone settings: ${e}`);
             }
+        } else if (hidingZoneCompressed !== null) {
+            // Modern compressed format
+            decompress(hidingZoneCompressed).then((data) => {
+                try {
+                    loadHidingZone(data);
+                    // Remove hiding zone parameter after initial load
+                    window.history.replaceState(
+                        {},
+                        "",
+                        window.location.pathname,
+                    );
+                } catch (e) {
+                    toast.error(`Invalid hiding zone settings: ${e}`);
+                }
+            });
+        } else if (pastebinId !== null) {
+            fetchFromPastebin(pastebinId)
+                .then((data) => {
+                    try {
+                        loadHidingZone(data);
+                        // Remove pb parameter after initial load
+                        window.history.replaceState(
+                            {},
+                            "",
+                            window.location.pathname,
+                        );
+                        toast.success(
+                            "Successfully loaded data from Pastebin link!",
+                        );
+                    } catch (e) {
+                        toast.error(`Invalid data from Pastebin: ${e}`);
+                    }
+                })
+                .catch((error) => {
+                    console.error("Failed to fetch from Pastebin:", error);
+                    toast.error(
+                        `Failed to load from Pastebin: ${error.message}`,
+                    );
+                });
+        } else if (fetchUrl !== null) {
+            fetch(fetchUrl)
+                .then((response) => {
+                    if (!response.ok)
+                        throw `${response.status} ${response.statusText}`;
+                    return response.text();
+                })
+                .then((data) => {
+                    try {
+                        loadHidingZone(data);
+                        // Remove url parameter after initial load
+                        window.history.replaceState(
+                            {},
+                            "",
+                            window.location.pathname,
+                        );
+                        toast.success(
+                            `Successfully loaded data from ${fetchUrl}`,
+                        );
+                    } catch (e) {
+                        toast.error(`Invalid data from ${fetchUrl}: ${e}`);
+                    }
+                })
+                .catch((error) => {
+                    console.error(`Failed to fetch from ${fetchUrl}:`, error);
+                    toast.error(
+                        `Failed to load from ${fetchUrl}: ${error.message}`,
+                    );
+                });
         }
     }, []);
 
-    const loadHidingZone = (hidingZone: typeof $hidingZone) => {
+    const loadHidingZone = (hidingZone: string) => {
         try {
             const geojson = JSON.parse(hidingZone);
 
@@ -84,6 +218,12 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                 mapGeoLocation.set(geojson);
                 mapGeoJSON.set(null);
                 polyGeoJSON.set(null);
+
+                if (geojson.alternateLocations) {
+                    additionalMapGeoLocations.set(geojson.alternateLocations);
+                } else {
+                    additionalMapGeoLocations.set([]);
+                }
             } else {
                 if (geojson.questions) {
                     questions.set(questionsSchema.parse(geojson.questions));
@@ -98,6 +238,37 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                 }
             }
 
+            const incomingPresets =
+                geojson.presets ?? geojson.properties?.presets;
+            if (incomingPresets && Array.isArray(incomingPresets)) {
+                try {
+                    const normalized = (incomingPresets as any[])
+                        .filter((p) => p && p.data)
+                        .map((p) => {
+                            return {
+                                id:
+                                    p.id ??
+                                    (typeof crypto !== "undefined" &&
+                                    typeof (crypto as any).randomUUID ===
+                                        "function"
+                                        ? (crypto as any).randomUUID()
+                                        : String(Date.now()) + Math.random()),
+                                name: p.name ?? "Imported preset",
+                                type: p.type ?? "custom",
+                                data: p.data,
+                                createdAt:
+                                    p.createdAt ?? new Date().toISOString(),
+                            };
+                        });
+                    if (normalized.length > 0) {
+                        customPresets.set(normalized);
+                        toast.info(`Imported ${normalized.length} preset(s)`);
+                    }
+                } catch (err) {
+                    console.warn("Failed to import presets", err);
+                }
+            }
+
             if (
                 geojson.disabledStations !== null &&
                 geojson.disabledStations.constructor === Array
@@ -109,6 +280,31 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                 hidingRadius.set(geojson.hidingRadius);
             }
 
+            if (geojson.zoneOptions) {
+                displayHidingZonesOptions.set(geojson.zoneOptions ?? []);
+            }
+
+            if (typeof geojson.useCustomStations === "boolean") {
+                useCustomStations.set(geojson.useCustomStations);
+            }
+
+            if (
+                geojson.customStations &&
+                geojson.customStations.constructor === Array
+            ) {
+                customStations.set(geojson.customStations);
+            }
+
+            if (typeof geojson.includeDefaultStations === "boolean") {
+                includeDefaultStations.set(geojson.includeDefaultStations);
+            }
+
+            if (geojson.permanentOverlay) {
+                permanentOverlay.set(geojson.permanentOverlay);
+            } else {
+                permanentOverlay.set(null);
+            }
+
             toast.success("Hiding zone loaded successfully", {
                 autoClose: 2000,
             });
@@ -117,145 +313,167 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
         }
     };
 
+    const saveToFile = () => {
+        try {
+            const data = JSON.stringify($hidingZone, null, 2);
+            const blob = new Blob([data], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            const timestamp = new Date()
+                .toISOString()
+                .replace(/[:.]/g, "-")
+                .slice(0, 19);
+            a.download = `jetlag-hiding-zone-${timestamp}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            toast.success("Hiding zone saved to file", { autoClose: 2000 });
+        } catch (e) {
+            console.error("Failed to save file:", e);
+            toast.error(`Failed to save file: ${e}`);
+        }
+    };
+
+    const loadFromFile = (file: File) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const result = event.target?.result;
+            if (typeof result === "string") {
+                loadHidingZone(result);
+            } else {
+                toast.error("Failed to read file");
+            }
+        };
+        reader.onerror = () => {
+            toast.error("Failed to read file");
+        };
+        reader.readAsText(file);
+    };
+
     return (
         <div
             className={cn(
-                "flex justify-end gap-2 max-[412px]:!mb-4 max-[340px]:flex-col",
+                "flex justify-end gap-2 max-[412px]:!mb-4 max-[640px]:overflow-x-auto max-[640px]:w-[85vw] max-[640px]:justify-start max-[640px]:[&>button]:flex-shrink-0 max-[640px]:[&>div]:flex-shrink-0 max-[640px]:pb-1",
                 className,
             )}
         >
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) loadFromFile(file);
+                    e.target.value = "";
+                }}
+            />
             <Button
                 className="shadow-md"
-                onClick={() => {
-                    const b64 = btoa(JSON.stringify($hidingZone));
-                    const url = `${window.location.protocol}//${window.location.host}${window.location.pathname}?hz=${b64}`;
+                onClick={saveToFile}
+                title="Download current hiding zone as a JSON file"
+            >
+                Save File
+            </Button>
+            <Button
+                className="shadow-md"
+                onClick={() => fileInputRef.current?.click()}
+                title="Load a hiding zone from a JSON file"
+            >
+                Load File
+            </Button>
+            <Button
+                className="shadow-md"
+                onClick={async () => {
+                    const hidingZoneString = JSON.stringify($hidingZone);
+                    let compressedData;
+                    try {
+                        compressedData = await compress(hidingZoneString);
+                    } catch (error) {
+                        console.error("Compression failed:", error);
+                        toast.error(`Failed to prepare data for sharing`);
+                        return;
+                    }
+
+                    const baseUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}`;
+                    let shareUrl = `${baseUrl}?${HIDING_ZONE_COMPRESSED_URL_PARAM}=${compressedData}`;
+
+                    if ($alwaysUsePastebin || shareUrl.length > 2000) {
+                        if ($pastebinApiKey) {
+                            try {
+                                toast.info(
+                                    "Data is being shared via Pastebin...",
+                                );
+                                const pastebinUrl = await uploadToPastebin(
+                                    $pastebinApiKey,
+                                    hidingZoneString,
+                                );
+                                const pasteId = pastebinUrl.substring(
+                                    pastebinUrl.lastIndexOf("/") + 1,
+                                );
+                                shareUrl = `${baseUrl}?${PASTEBIN_URL_PARAM}=${pasteId}`;
+                                toast.success(
+                                    "Successfully uploaded to Pastebin! URL is ready to be shared.",
+                                );
+                            } catch (error) {
+                                console.error("Pastebin upload failed:", error);
+                                toast.warning(
+                                    "Pastebin upload failed, falling back to file download.",
+                                );
+                                saveToFile();
+                                return;
+                            }
+                        } else {
+                            toast.info(
+                                "Data is too large for a URL — saving to file instead.",
+                            );
+                            saveToFile();
+                            return;
+                        }
+                    }
 
                     // Show platform native share sheet if possible
-                    if (navigator.share) {
-                        navigator
-                            .share({
-                                title: document.title,
-                                url: url,
-                            })
-                            .catch(() => toast.error("Failed to share via OS"));
-                    } else if (!navigator || !navigator.clipboard) {
-                        return toast.error(
-                            `Clipboard not supported. Try manually copying/pasting: ${url}`,
-                            { className: "p-0 w-[1000px]" },
-                        );
-                    } else {
-                        navigator.clipboard.writeText(url);
-                        toast.success("Hiding zone URL copied to clipboard", {
-                            autoClose: 2000,
-                        });
-                    }
+                    await shareOrFallback(shareUrl).then((result) => {
+                        console.log(`result ${result}`);
+                        if (result === false) {
+                            return toast.error(
+                                `Clipboard not supported. Try manually copying/pasting: ${shareUrl}`,
+                                { className: "p-0 w-[1000px]" },
+                            );
+                        }
+
+                        if (result === "clipboard") {
+                            toast.success(
+                                "Hiding zone URL copied to clipboard",
+                                {
+                                    autoClose: 2000,
+                                },
+                            );
+                        }
+                    });
                 }}
+                data-tutorial-id="share-questions-button"
             >
                 Share
             </Button>
-            <Drawer
-                open={isInstructionsOpen}
-                onOpenChange={setInstructionsOpen}
+            <Button
+                className="w-24 shadow-md"
+                onClick={() => {
+                    showTutorial.set(true);
+                }}
             >
-                <DrawerTrigger className="w-24" asChild>
-                    <Button className="w-24 shadow-md">Instructions</Button>
-                </DrawerTrigger>
-                <DrawerContent>
-                    <div className="flex flex-col items-center gap-4 mb-1">
-                        <DrawerHeader>
-                            <DrawerTitle className="text-4xl font-semibold font-poppins">
-                                Instructions
-                            </DrawerTitle>
-                        </DrawerHeader>
-                        <div className="px-12 pb-2 max-w-[1000px] text-center overflow-y-scroll max-h-[40vh] font-oxygen">
-                            <DrawerDescription className="mb-2">
-                                Map Generator for Jet Lag The Game: Hide and
-                                Seek is intended for those who have purchased
-                                the Jet Lag Home Game. However, it is not
-                                affiliated with them in any way.
-                            </DrawerDescription>
-                            <p className="mb-3">
-                                At the beginning of the game, all players should
-                                coordinate the bounds of the game (Japan for the
-                                original Hide and Seek). You can choose a
-                                location at the top of the map (e.g. city,
-                                county, state, country...) or draw it on the map
-                                (look at the bottom left of the map). This can
-                                be easily shared through the{" "}
-                                <a
-                                    onClick={() => {
-                                        setOptionsOpen(true);
-                                        setInstructionsOpen(false);
-                                    }}
-                                    className="text-blue-500 cursor-pointer"
-                                >
-                                    options menu
-                                </a>{" "}
-                                at the bottom right of the screen. You may want
-                                to change the default unit from miles in that
-                                menu. You can also choose to highlight train
-                                lines on the map in that menu.
-                            </p>
-                            <p className="mb-3">
-                                Hiders should enable &ldquo;Hider Mode&rdquo; in
-                                that menu. This will allow the hider to set
-                                their location and have all questions be
-                                automatically answered according to that
-                                location. Not only will this make filling the
-                                maps for hiders incredibly easy, but it will
-                                also prevent any conflicting information between
-                                the hider and the seekers.
-                            </p>
-                            <p className="mb-3">
-                                Whenever a question is asked, you should add it
-                                to the map immediately. This can be done most
-                                trivially by right clicking on the map in
-                                desktop or long pressing on the map in mobile.
-                                Choose the question from the dropdown and a
-                                marker will appear where you clicked. Move that
-                                to the location where you asked the question.
-                                Alternatively you could click the marker and
-                                click the &ldquo;Current&rdquo; button for the
-                                marker to be moved to your physical location.
-                                You can also add a question through the question
-                                sidebar (left side of the screen, open it on the
-                                top left). The sidebar will display all the
-                                questions in an organized manner instead of
-                                requiring a click on each marker to see each
-                                question.
-                            </p>
-                            <p className="mb-3">
-                                Seekers can also enable hiding zone mode by
-                                clicking the thumbtack on the top-right of the
-                                map. This will display all possible hiding zones
-                                (circles with a {$hidingRadius} mile radius
-                                around a train station) that the hider could be
-                                in on the map in green. Hiding zone mode must be
-                                enabled for questions that deal with hiding
-                                zones (i.e., station starts with same letter).
-                                All hiding zones will also be listed in the
-                                &ldquo;Hiding Zone&rdquo; sidebar, accessible
-                                from the top-right of the map.
-                            </p>
-                            <p className="mb-3">
-                                If you encounter any bugs or have any feature
-                                requests, please report them at the{" "}
-                                <a
-                                    href="https://github.com/taibeled/JetLagHideAndSeek/issues"
-                                    className="text-blue-500 cursor-pointer"
-                                >
-                                    GitHub repository
-                                </a>
-                                . If you appreciate this project, you can also
-                                leave a star there.
-                            </p>
-                        </div>
-                    </div>
-                </DrawerContent>
-            </Drawer>
+                Tutorial
+            </Button>
             <Drawer open={isOptionsOpen} onOpenChange={setOptionsOpen}>
                 <DrawerTrigger className="w-24" asChild>
-                    <Button className="w-24 shadow-md">Options</Button>
+                    <Button
+                        className="w-24 shadow-md"
+                        data-tutorial-id="option-questions-button"
+                    >
+                        Options
+                    </Button>
                 </DrawerTrigger>
                 <DrawerContent>
                     <div className="flex flex-col items-center gap-4 mb-4">
@@ -306,6 +524,157 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 onChange={defaultUnit.set}
                             />
                             <Separator className="bg-slate-300 w-[280px]" />
+                            <Label>New Custom Question Defaults</Label>
+                            <Select
+                                trigger="New custom default"
+                                options={{
+                                    ask: "Ask each time",
+                                    blank: "Start blank",
+                                    prefill: "Copy from current",
+                                }}
+                                value={$customInitPref}
+                                onValueChange={(v) =>
+                                    customInitPreference.set(v as any)
+                                }
+                            />
+                            <Separator className="bg-slate-300 w-[280px]" />
+                            <Label>Base map style</Label>
+                            <Select
+                                trigger="Base map style"
+                                options={{
+                                    voyager: "CARTO Voyager",
+                                    light: "CARTO Light",
+                                    dark: "CARTO Dark",
+                                    transport: "Thunderforest Transport",
+                                    neighbourhood:
+                                        "Thunderforest Neighbourhood",
+                                    osmcarto: "OpenStreetMap Carto",
+                                }}
+                                value={$baseTileLayer}
+                                onValueChange={(v) =>
+                                    baseTileLayer.set(v as any)
+                                }
+                            />
+                            <div className="flex flex-col items-center gap-2">
+                                <Label>Thunderforest API Key</Label>
+                                <Input
+                                    type="text"
+                                    value={$thunderforestApiKey}
+                                    id="thunderforestApiKey"
+                                    onChange={(e) =>
+                                        thunderforestApiKey.set(e.target.value)
+                                    }
+                                    placeholder="Enter your Thunderforest API key"
+                                />
+                                <p className="text-xs text-gray-500">
+                                    Needed for Thunderforest map styles. Create
+                                    a key{" "}
+                                    <a
+                                        href="https://manage.thunderforest.com/users/sign_up?price=hobby-project-usd"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-500 cursor-pointer"
+                                    >
+                                        here.
+                                    </a>{" "}
+                                    Don&apos;t worry, it&apos;s free.
+                                </p>
+                            </div>
+                            <Separator className="bg-slate-300 w-[280px]" />
+                            <div className="flex flex-col items-center gap-2">
+                                <Label>Pastebin API Key</Label>
+                                <Input
+                                    type="text"
+                                    value={$pastebinApiKey}
+                                    id="pastebinApiKey"
+                                    onChange={(e) =>
+                                        pastebinApiKey.set(e.target.value)
+                                    }
+                                    placeholder="Enter your Pastebin API key"
+                                />
+                                <p className="text-xs text-gray-500">
+                                    Optional. If set, large game data will be
+                                    shared via Pastebin URL; otherwise it falls
+                                    back to a JSON file download. Create a key{" "}
+                                    <a
+                                        href="https://pastebin.com/doc_api"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-500 cursor-pointer"
+                                    >
+                                        here
+                                    </a>
+                                    .
+                                </p>
+                            </div>
+                            <Separator className="bg-slate-300 w-[280px]" />
+                            <Label>Overpass API Host</Label>
+                            <Select
+                                trigger="Overpass API host"
+                                options={{
+                                    ...Object.fromEntries(
+                                        Object.entries(OVERPASS_HOSTS).map(
+                                            ([label, url]) => [url, label],
+                                        ),
+                                    ),
+                                    custom: "Custom URL",
+                                }}
+                                value={$overpassHost}
+                                onValueChange={(v) =>
+                                    overpassHost.set(v as any)
+                                }
+                            />
+                            {$overpassHost === "custom" && (
+                                <div className="flex flex-col items-center gap-2 w-full">
+                                    <Input
+                                        type="text"
+                                        value={$overpassCustomHost}
+                                        onChange={(e) =>
+                                            overpassCustomHost.set(
+                                                e.target.value,
+                                            )
+                                        }
+                                        placeholder="https://your-overpass-instance/api/interpreter"
+                                    />
+                                </div>
+                            )}
+                            <p className="text-xs text-gray-500 text-center">
+                                {$overpassHost === "custom"
+                                    ? "The other hosts will be used as fallbacks if this one fails."
+                                    : "The remaining hosts will be tried as fallbacks if the selected one fails."}
+                            </p>
+                            <Separator className="bg-slate-300 w-[280px]" />
+                            <Label>Permanent Map Overlay</Label>
+                            <div className="flex flex-row max-[330px]:flex-col gap-4">
+                                <Button
+                                    onClick={() => permanentOverlay.set(null)}
+                                >
+                                    Remove
+                                </Button>
+                                <Button
+                                    onClick={async () => {
+                                        if (!navigator || !navigator.clipboard)
+                                            return toast.error(
+                                                "Clipboard not supported",
+                                            );
+
+                                        try {
+                                            const clipboard =
+                                                await navigator.clipboard.readText();
+                                            const geojson =
+                                                JSON.parse(clipboard);
+                                            permanentOverlay.set(geojson);
+                                        } catch (e) {
+                                            toast.error(
+                                                `Invalid GeoJSON overlay: ${e}`,
+                                            );
+                                        }
+                                    }}
+                                >
+                                    Paste GeoJSON
+                                </Button>
+                            </div>
+                            <Separator className="bg-slate-300 w-[280px]" />
                             <div className="flex flex-row items-center gap-2">
                                 <label className="text-2xl font-semibold font-poppins">
                                     Animate map movements?
@@ -321,15 +690,15 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                             </div>
                             <div className="flex flex-row items-center gap-2">
                                 <label className="text-2xl font-semibold font-poppins">
-                                    Highlight train lines?
+                                    Force Pastebin for sharing?
                                 </label>
                                 <Checkbox
-                                    checked={$highlightTrainLines}
-                                    onCheckedChange={() => {
-                                        highlightTrainLines.set(
-                                            !$highlightTrainLines,
-                                        );
-                                    }}
+                                    checked={$alwaysUsePastebin}
+                                    onCheckedChange={() =>
+                                        alwaysUsePastebin.set(
+                                            !$alwaysUsePastebin,
+                                        )
+                                    }
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
@@ -373,6 +742,54 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                             </div>
                             <div className="flex flex-row items-center gap-2">
                                 <label className="text-2xl font-semibold font-poppins">
+                                    Auto zoom?
+                                </label>
+                                <Checkbox
+                                    checked={$autoZoom}
+                                    onCheckedChange={() =>
+                                        autoZoom.set(!$autoZoom)
+                                    }
+                                />
+                            </div>
+                            <div className="flex flex-row items-center gap-2">
+                                <label className="text-2xl font-semibold font-poppins">
+                                    Follow Me (GPS)?
+                                </label>
+                                <Checkbox
+                                    checked={$followMe}
+                                    onCheckedChange={() =>
+                                        followMe.set(!$followMe)
+                                    }
+                                />
+                            </div>
+                            <div className="flex flex-row items-center gap-2">
+                                <label className="text-2xl font-semibold font-poppins">
+                                    Default to custom questions?
+                                </label>
+                                <Checkbox
+                                    checked={$defaultCustomQuestions}
+                                    onCheckedChange={() =>
+                                        defaultCustomQuestions.set(
+                                            !$defaultCustomQuestions,
+                                        )
+                                    }
+                                />
+                            </div>
+                            <div className="flex flex-row items-center gap-2">
+                                <label className="text-2xl font-semibold font-poppins">
+                                    Allow Google Plus codes?
+                                </label>
+                                <Checkbox
+                                    checked={$allowGooglePlusCodes}
+                                    onCheckedChange={() =>
+                                        allowGooglePlusCodes.set(
+                                            !$allowGooglePlusCodes,
+                                        )
+                                    }
+                                />
+                            </div>
+                            <div className="flex flex-row items-center gap-2">
+                                <label className="text-2xl font-semibold font-poppins">
                                     Hider mode?
                                 </label>
                                 <Checkbox
@@ -406,6 +823,7 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                     <LatitudeLongitude
                                         latitude={$hiderMode.latitude}
                                         longitude={$hiderMode.longitude}
+                                        inlineEdit
                                         onChange={(latitude, longitude) => {
                                             $hiderMode.latitude =
                                                 latitude ?? $hiderMode.latitude;
@@ -423,8 +841,7 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                                 );
                                             }
                                         }}
-                                        latLabel="Hider Latitude"
-                                        lngLabel="Hider Longitude"
+                                        label="Hider Location"
                                     />
                                     {!autoSave && (
                                         <SidebarMenuItem>

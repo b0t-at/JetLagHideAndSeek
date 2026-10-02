@@ -1,34 +1,43 @@
-import { atom, computed } from "nanostores";
 import { persistentAtom } from "@nanostores/persistent";
-import { type OpenStreetMap } from "../maps/api";
+import type { FeatureCollection, MultiPolygon, Polygon } from "geojson";
 import type { Map } from "leaflet";
+import { atom, computed, onSet } from "nanostores";
+
+import type {
+    AdditionalMapGeoLocations,
+    CustomStation,
+    OpenStreetMap,
+    StationCircle,
+} from "@/maps/api";
+import { extractStationLabel } from "@/maps/geo-utils";
 import {
-    questionSchema,
-    questionsSchema,
     type DeepPartial,
     type Question,
     type Questions,
+    questionSchema,
+    questionsSchema,
     type Units,
-} from "./schema";
+} from "@/maps/schema";
 
 export const mapGeoLocation = persistentAtom<OpenStreetMap>(
     "mapGeoLocation",
     {
-        geometry: {
-            coordinates: [36.5748441, 139.2394179],
-            type: "Point",
-        },
         type: "Feature",
         properties: {
             osm_type: "R",
-            osm_id: 382313,
-            extent: [45.7112046, 122.7141754, 20.2145811, 154.205541],
-            country: "Japan",
+            osm_id: 175905,
             osm_key: "place",
-            countrycode: "JP",
-            osm_value: "country",
-            name: "Japan",
-            type: "country",
+            osm_value: "city",
+            type: "city",
+            name: "New York",
+            state: "New York",
+            country: "United States",
+            countrycode: "US",
+            extent: [40.91763, -74.258843, 40.476578, -73.700233],
+        },
+        geometry: {
+            type: "Point",
+            coordinates: [40.7127281, -74.0060152],
         },
     },
     {
@@ -37,8 +46,27 @@ export const mapGeoLocation = persistentAtom<OpenStreetMap>(
     },
 );
 
-export const mapGeoJSON = atom<any>(null);
-export const polyGeoJSON = persistentAtom<any>("polyGeoJSON", null, {
+export const additionalMapGeoLocations = persistentAtom<
+    AdditionalMapGeoLocations[]
+>("additionalMapGeoLocations", [], {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+export const permanentOverlay = persistentAtom<FeatureCollection | null>(
+    "permanentOverlay",
+    null,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+export const mapGeoJSON = atom<FeatureCollection<
+    Polygon | MultiPolygon
+> | null>(null);
+export const polyGeoJSON = persistentAtom<FeatureCollection<
+    Polygon | MultiPolygon
+> | null>("polyGeoJSON", null, {
     encode: JSON.stringify,
     decode: JSON.parse,
 });
@@ -61,14 +89,6 @@ export const questionModified = (..._: any[]) => {
 export const leafletMapContext = atom<Map | null>(null);
 
 export const defaultUnit = persistentAtom<Units>("defaultUnit", "miles");
-export const highlightTrainLines = persistentAtom<boolean>(
-    "highlightTrainLines",
-    false,
-    {
-        encode: JSON.stringify,
-        decode: JSON.parse,
-    },
-);
 export const hiderMode = persistentAtom<
     | false
     | {
@@ -96,8 +116,52 @@ export const displayHidingZonesOptions = persistentAtom<string[]>(
         decode: JSON.parse,
     },
 );
+export const displayHidingZonesStyle = persistentAtom<
+    "zones" | "stations" | "no-overlap" | "no-display"
+>("displayHidingZonesStyle", "zones");
 export const questionFinishedMapData = atom<any>(null);
-export const trainStations = atom<any[]>([]);
+
+export const trainStations = atom<StationCircle[]>([]);
+onSet(trainStations, ({ newValue }) => {
+    newValue.sort((a, b) => {
+        const aName = (extractStationLabel(a.properties) || "") as string;
+        const bName = (extractStationLabel(b.properties) || "") as string;
+        return aName.localeCompare(bName);
+    });
+});
+
+export const useCustomStations = persistentAtom<boolean>(
+    "useCustomStations",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const customStations = persistentAtom<CustomStation[]>(
+    "customStations",
+    [],
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const mergeDuplicates = persistentAtom<boolean>(
+    "removeDuplicates",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+export const includeDefaultStations = persistentAtom<boolean>(
+    "includeDefaultStations",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
 export const animateMapMovements = persistentAtom<boolean>(
     "animateMapMovements",
     false,
@@ -110,6 +174,14 @@ export const hidingRadius = persistentAtom<number>("hidingRadius", 0.5, {
     encode: JSON.stringify,
     decode: JSON.parse,
 });
+export const hidingRadiusUnits = persistentAtom<Units>(
+    "hidingRadiusUnits",
+    "miles",
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
 export const disabledStations = persistentAtom<string[]>(
     "disabledStations",
     [],
@@ -131,16 +203,103 @@ export const save = () => {
     }
 };
 
-// Exported hiding zone that can be loaded from clipboard or URL
+/* Presets for custom questions (savable / sharable / editable) */
+export type CustomPreset = {
+    id: string;
+    name: string;
+    type: string;
+    data: any;
+    createdAt: string;
+};
+
+export const customPresets = persistentAtom<CustomPreset[]>(
+    "customPresets",
+    [],
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+onSet(customPresets, ({ newValue }) => {
+    newValue.sort((a, b) => a.name.localeCompare(b.name));
+});
+
+export const saveCustomPreset = (
+    preset: Omit<CustomPreset, "id" | "createdAt">,
+) => {
+    const id =
+        typeof crypto !== "undefined" &&
+        typeof (crypto as any).randomUUID === "function"
+            ? (crypto as any).randomUUID()
+            : String(Date.now());
+    const p: CustomPreset = {
+        ...preset,
+        id,
+        createdAt: new Date().toISOString(),
+    };
+    customPresets.set([...customPresets.get(), p]);
+    return p;
+};
+
+export const updateCustomPreset = (
+    id: string,
+    updates: Partial<CustomPreset>,
+) => {
+    customPresets.set(
+        customPresets
+            .get()
+            .map((p) => (p.id === id ? { ...p, ...updates } : p)),
+    );
+};
+
+export const deleteCustomPreset = (id: string) => {
+    customPresets.set(customPresets.get().filter((p) => p.id !== id));
+};
+
 export const hidingZone = computed(
-    [questions, polyGeoJSON, mapGeoLocation, disabledStations, hidingRadius],
-    (q, geo, loc, disabledStations, radius) => {
+    [
+        questions,
+        polyGeoJSON,
+        mapGeoLocation,
+        additionalMapGeoLocations,
+        disabledStations,
+        hidingRadius,
+        hidingRadiusUnits,
+        displayHidingZonesOptions,
+        useCustomStations,
+        customStations,
+        includeDefaultStations,
+        customPresets,
+        permanentOverlay,
+    ],
+    (
+        q,
+        geo,
+        loc,
+        altLoc,
+        disabledStations,
+        radius,
+        hidingRadiusUnits,
+        zoneOptions,
+        useCustom,
+        $customStations,
+        includeDefault,
+        presets,
+        $permanentOverlay,
+    ) => {
         if (geo !== null) {
             return {
                 ...geo,
                 questions: q,
                 disabledStations: disabledStations,
                 hidingRadius: radius,
+                hidingRadiusUnits,
+                zoneOptions: zoneOptions,
+                useCustomStations: useCustom,
+                customStations: $customStations,
+                includeDefaultStations: includeDefault,
+                presets: structuredClone(presets),
+                permanentOverlay: $permanentOverlay,
             };
         } else {
             const $loc = structuredClone(loc);
@@ -150,6 +309,14 @@ export const hidingZone = computed(
                 ...$loc,
                 disabledStations: disabledStations,
                 hidingRadius: radius,
+                hidingRadiusUnits,
+                alternateLocations: structuredClone(altLoc),
+                zoneOptions: zoneOptions,
+                useCustomStations: useCustom,
+                customStations: $customStations,
+                includeDefaultStations: includeDefault,
+                presets: structuredClone(presets),
+                permanentOverlay: $permanentOverlay,
             };
         }
     },
@@ -164,5 +331,76 @@ export const planningModeEnabled = persistentAtom<boolean>(
         decode: JSON.parse,
     },
 );
+export const autoZoom = persistentAtom<boolean>("autoZoom", true, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
 
 export const isLoading = atom<boolean>(false);
+
+export const baseTileLayer = persistentAtom<
+    "voyager" | "light" | "dark" | "transport" | "neighbourhood" | "osmcarto"
+>("baseTileLayer", "voyager");
+export const thunderforestApiKey = persistentAtom<string>(
+    "thunderforestApiKey",
+    "",
+    {
+        encode: (value: string) => value,
+        decode: (value: string) => value,
+    },
+);
+export const followMe = persistentAtom<boolean>("followMe", false, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+export const defaultCustomQuestions = persistentAtom<boolean>(
+    "defaultCustomQuestions",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+export const pastebinApiKey = persistentAtom<string>("pastebinApiKey", "");
+export const alwaysUsePastebin = persistentAtom<boolean>(
+    "alwaysUsePastebin",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+export const showTutorial = persistentAtom<boolean>("showTutorials", true, {
+    encode: JSON.stringify,
+    decode: JSON.parse,
+});
+export const tutorialStep = atom<number>(0);
+
+export const customInitPreference = persistentAtom<"ask" | "blank" | "prefill">(
+    "customInitPreference",
+    "ask",
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+export const allowGooglePlusCodes = persistentAtom<boolean>(
+    "allowGooglePlusCodes",
+    false,
+    {
+        encode: JSON.stringify,
+        decode: JSON.parse,
+    },
+);
+
+export const overpassHost = persistentAtom<string>(
+    "overpassHost",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+);
+export const overpassCustomHost = persistentAtom<string>(
+    "overpassCustomHost",
+    "",
+);

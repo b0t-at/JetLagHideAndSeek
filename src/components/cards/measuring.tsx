@@ -1,43 +1,52 @@
-import { LatitudeLongitude } from "../LatLngPicker";
 import { useStore } from "@nanostores/react";
-import { cn } from "../../lib/utils";
+import { Label } from "@radix-ui/react-label";
+import * as React from "react";
+import { Suspense, use } from "react";
+
+import CustomInitDialog from "@/components/CustomInitDialog";
+import { LatitudeLongitude } from "@/components/LatLngPicker";
+import PresetsDialog from "@/components/PresetsDialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select } from "@/components/ui/select";
 import {
+    MENU_ITEM_CLASSNAME,
+    SidebarMenuItem,
+} from "@/components/ui/sidebar-l";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+    customInitPreference,
     displayHidingZones,
     drawingQuestionKey,
     hiderMode,
+    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
-    isLoading,
-} from "../../lib/context";
-import { iconColors, prettifyLocation } from "../../maps/api";
-import { MENU_ITEM_CLASSNAME, SidebarMenuItem } from "../ui/sidebar-l";
+} from "@/lib/context";
+import { cn } from "@/lib/utils";
 import {
-    Select,
-    SelectContent,
-    SelectGroup,
-    SelectItem,
-    SelectLabel,
-    SelectTrigger,
-    SelectValue,
-} from "../ui/select";
-import { Checkbox } from "../ui/checkbox";
+    determineMeasuringBoundary,
+    findAdminZoneInfo,
+} from "@/maps/questions/measuring";
+import {
+    determineUnionizedStrings,
+    type MeasuringQuestion,
+    measuringQuestionSchema,
+    NO_GROUP,
+} from "@/maps/schema";
+
 import { QuestionCard } from "./base";
-import type { MeasuringQuestion, TentacleLocations } from "@/lib/schema";
-import { determineMeasuringBoundary } from "@/maps/measuring";
 
 export const MeasuringQuestionComponent = ({
     data,
     questionKey,
     sub,
     className,
-    showDeleteButton = true,
 }: {
     data: MeasuringQuestion;
     questionKey: number;
     sub?: string;
     className?: string;
-    showDeleteButton?: boolean;
 }) => {
     useStore(triggerLocalRefresh);
     const $hiderMode = useStore(hiderMode);
@@ -45,6 +54,8 @@ export const MeasuringQuestionComponent = ({
     const $displayHidingZones = useStore(displayHidingZones);
     const $drawingQuestionKey = useStore(drawingQuestionKey);
     const $isLoading = useStore(isLoading);
+    const $customInitPref = useStore(customInitPreference);
+    const [customDialogOpen, setCustomDialogOpen] = React.useState(false);
     const label = `Measuring
     ${
         $questions
@@ -56,6 +67,66 @@ export const MeasuringQuestionComponent = ({
     let questionSpecific = <></>;
 
     switch (data.type) {
+        case "admin-measure":
+            questionSpecific = (
+                <>
+                    <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
+                        <Select
+                            trigger="OSM Zone"
+                            options={{
+                                2: "OSM Zone 2 (Country)",
+                                3: "OSM Zone 3 (region in Japan)",
+                                4: "OSM Zone 4 (prefecture in Japan)",
+                                5: "OSM Zone 5",
+                                6: "OSM Zone 6",
+                                7: "OSM Zone 7",
+                                8: "OSM Zone 8",
+                                9: "OSM Zone 9",
+                                10: "OSM Zone 10",
+                            }}
+                            value={(
+                                (data as any).cat?.adminLevel ?? 4
+                            ).toString()}
+                            onValueChange={(value) => {
+                                if (!(data as any).cat) {
+                                    (data as any).cat = { adminLevel: 4 };
+                                }
+                                (data as any).cat.adminLevel = parseInt(
+                                    value,
+                                ) as 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+                                (data as any).cat.zoneName = undefined;
+                                questionModified();
+                            }}
+                            disabled={!data.drag || $isLoading}
+                        />
+                    </SidebarMenuItem>
+                    <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
+                        <Suspense
+                            fallback={
+                                <div className="flex items-center justify-center w-full h-[3rem]">
+                                    <svg
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        width="24"
+                                        height="24"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        className="animate-spin"
+                                    >
+                                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                                    </svg>
+                                </div>
+                            }
+                        >
+                            <AdminZoneNameDisplay data={data} />
+                        </Suspense>
+                    </SidebarMenuItem>
+                </>
+            );
+            break;
         case "mcdonalds":
         case "seven11":
             questionSpecific = (
@@ -69,6 +140,7 @@ export const MeasuringQuestionComponent = ({
             break;
         case "aquarium":
         case "hospital":
+        case "peak":
         case "museum":
         case "theme_park":
         case "zoo":
@@ -87,22 +159,30 @@ export const MeasuringQuestionComponent = ({
         case "custom-measure":
             if (data.drag) {
                 questionSpecific = (
-                    <p className="px-2 mb-1 text-center text-orange-500">
-                        To modify the measuring question, enable it:
-                        <Checkbox
-                            className="mx-1 my-1"
-                            checked={$drawingQuestionKey === questionKey}
-                            onCheckedChange={(checked) => {
-                                if (checked) {
-                                    drawingQuestionKey.set(questionKey);
-                                } else {
-                                    drawingQuestionKey.set(-1);
-                                }
-                            }}
-                            disabled={!data.drag || $isLoading}
-                        />
-                        and use the buttons at the bottom left of the map.
-                    </p>
+                    <>
+                        <p className="px-2 mb-1 text-center text-orange-500">
+                            To modify the measuring question, enable it:
+                            <Checkbox
+                                className="mx-1 my-1"
+                                checked={$drawingQuestionKey === questionKey}
+                                onCheckedChange={(checked) => {
+                                    if (checked) {
+                                        drawingQuestionKey.set(questionKey);
+                                    } else {
+                                        drawingQuestionKey.set(-1);
+                                    }
+                                }}
+                                disabled={!data.drag || $isLoading}
+                            />
+                            and use the buttons at the bottom left of the map.
+                        </p>
+                        <div className="flex justify-center mb-2">
+                            <PresetsDialog
+                                data={data}
+                                presetTypeHint={data.type}
+                            />
+                        </div>
+                    </>
                 );
             }
             break;
@@ -114,158 +194,142 @@ export const MeasuringQuestionComponent = ({
             label={label}
             sub={sub}
             className={className}
-            showDeleteButton={showDeleteButton}
+            collapsed={data.collapsed}
+            setCollapsed={(collapsed) => {
+                data.collapsed = collapsed; // Doesn't trigger a re-render so no need for questionModified
+            }}
+            locked={!data.drag}
+            setLocked={(locked) => questionModified((data.drag = !locked))}
+            hidden={data.hidden}
+            setHidden={(hidden) => questionModified((data.hidden = !hidden))}
         >
+            <CustomInitDialog
+                open={customDialogOpen}
+                onOpenChange={setCustomDialogOpen}
+                onBlank={async () => {
+                    if (!(data as any).geo) {
+                        (data as any).geo = {
+                            type: "FeatureCollection",
+                            features: [],
+                        };
+                    } else {
+                        (data as any).geo.features = [];
+                    }
+                    data.type = "custom-measure";
+                    questionModified();
+                    setCustomDialogOpen(false);
+                }}
+                onPrefill={async () => {
+                    const boundary = await determineMeasuringBoundary(data);
+                    if (!(data as any).geo) {
+                        (data as any).geo = {
+                            type: "FeatureCollection",
+                            features: [],
+                        };
+                    }
+                    (data as any).geo.features = boundary ? boundary : [];
+                    data.type = "custom-measure";
+                    questionModified();
+                    setCustomDialogOpen(false);
+                }}
+            />
             <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
                 <Select
+                    trigger="Measuring Type"
+                    options={Object.fromEntries(
+                        measuringQuestionSchema.options
+                            .filter((x) => x.description === NO_GROUP)
+                            .flatMap((x) =>
+                                determineUnionizedStrings(x.shape.type),
+                            )
+                            .map((x) => [(x._def as any).value, x.description]),
+                    )}
+                    groups={measuringQuestionSchema.options
+                        .filter((x) => x.description !== NO_GROUP)
+                        .map((x) => [
+                            x.description,
+                            Object.fromEntries(
+                                determineUnionizedStrings(x.shape.type).map(
+                                    (x) => [
+                                        (x._def as any).value,
+                                        x.description,
+                                    ],
+                                ),
+                            ),
+                        ])
+                        .reduce(
+                            (acc, [key, value]) => {
+                                const values = {
+                                    disabled: !$displayHidingZones,
+                                    options: value,
+                                };
+
+                                if (acc[key]) {
+                                    acc[key].options = {
+                                        ...acc[key].options,
+                                        ...value,
+                                    };
+                                } else {
+                                    acc[key] = values;
+                                }
+
+                                return acc;
+                            },
+                            {} as Record<
+                                string,
+                                {
+                                    disabled: boolean;
+                                    options: Record<string, string>;
+                                }
+                            >,
+                        )}
                     value={data.type}
                     onValueChange={async (value) => {
                         if (value === "custom-measure") {
-                            const boundary =
-                                await determineMeasuringBoundary(data);
-
-                            if (!(data as any).geo) {
-                                (data as any).geo = {
-                                    type: "FeatureCollection",
-                                    features: [],
-                                };
+                            if ($customInitPref === "ask") {
+                                setCustomDialogOpen(true);
+                                return;
                             }
-
-                            (data as any).geo.features = boundary
-                                ? boundary
-                                : [];
+                            if ($customInitPref === "blank") {
+                                if (!(data as any).geo) {
+                                    (data as any).geo = {
+                                        type: "FeatureCollection",
+                                        features: [],
+                                    };
+                                } else {
+                                    (data as any).geo.features = [];
+                                }
+                            } else if ($customInitPref === "prefill") {
+                                const boundary =
+                                    await determineMeasuringBoundary(data);
+                                if (!(data as any).geo) {
+                                    (data as any).geo = {
+                                        type: "FeatureCollection",
+                                        features: [],
+                                    };
+                                }
+                                (data as any).geo.features = boundary
+                                    ? boundary
+                                    : [];
+                            }
+                            data.type = value;
+                            questionModified();
+                            return;
                         }
-                        data.type = value as any;
+                        if (value === "admin-measure" && !(data as any).cat) {
+                            (data as any).cat = { adminLevel: 4 };
+                        }
+                        data.type = value;
                         questionModified();
                     }}
                     disabled={!data.drag || $isLoading}
-                >
-                    <SelectTrigger>
-                        <SelectValue placeholder="Measuring Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="coastline">
-                            Coastline Question
-                        </SelectItem>
-                        <SelectItem value="airport">
-                            Commercial Airport In Zone Question
-                        </SelectItem>
-                        <SelectItem value="city">
-                            Major City (1,000,000+ people) Question
-                        </SelectItem>
-                        <SelectItem value="highspeed-measure-shinkansen">
-                            High-Speed Rail Question
-                        </SelectItem>
-                        {(
-                            [
-                                "aquarium",
-                                "zoo",
-                                "theme_park",
-                                "museum",
-                                "hospital",
-                                "cinema",
-                                "library",
-                                "golf_course",
-                                "consulate",
-                                "park",
-                            ] as TentacleLocations[]
-                        ).map((location) => (
-                            <SelectItem
-                                value={location + "-full"}
-                                key={location + "-full"}
-                            >
-                                {prettifyLocation(location)} Question
-                                (Small+Medium Games)
-                            </SelectItem>
-                        ))}
-                        <SelectItem value="custom-measure">
-                            Custom Measuring Question
-                        </SelectItem>
-                        <SelectGroup>
-                            <SelectLabel>Hiding Zone Mode</SelectLabel>
-                            <SelectItem
-                                value="mcdonalds"
-                                disabled={!$displayHidingZones}
-                            >
-                                McDonald&apos;s Question
-                            </SelectItem>
-                            <SelectItem
-                                value="seven11"
-                                disabled={!$displayHidingZones}
-                            >
-                                7-Eleven Question
-                            </SelectItem>
-                            <SelectItem
-                                value="rail-measure"
-                                disabled={!$displayHidingZones}
-                            >
-                                Train Station Question
-                            </SelectItem>
-                            {(
-                                [
-                                    "aquarium",
-                                    "zoo",
-                                    "theme_park",
-                                    "museum",
-                                    "hospital",
-                                    "cinema",
-                                    "library",
-                                    "golf_course",
-                                    "consulate",
-                                    "park",
-                                ] as TentacleLocations[]
-                            ).map((location) => (
-                                <SelectItem
-                                    value={location}
-                                    key={location}
-                                    disabled={!$displayHidingZones}
-                                >
-                                    {prettifyLocation(location)} Question (Large
-                                    Game)
-                                </SelectItem>
-                            ))}
-                        </SelectGroup>
-                    </SelectContent>
-                </Select>
+                />
             </SidebarMenuItem>
             {questionSpecific}
-            <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
-                <label className="text-2xl font-semibold font-poppins">
-                    Hider Closer
-                </label>
-                <Checkbox
-                    disabled={!!$hiderMode || !data.drag || $isLoading}
-                    checked={data.hiderCloser}
-                    onCheckedChange={(checked) =>
-                        questionModified(
-                            (data.hiderCloser = checked as boolean),
-                        )
-                    }
-                />
-            </SidebarMenuItem>
-            <SidebarMenuItem
-                className={cn(
-                    MENU_ITEM_CLASSNAME,
-                    "text-2xl font-semibold font-poppins",
-                )}
-                style={{
-                    backgroundColor: iconColors[data.color],
-                    color: data.color === "gold" ? "black" : undefined,
-                }}
-            >
-                Color (lock{" "}
-                <Checkbox
-                    checked={!data.drag}
-                    disabled={$isLoading}
-                    onCheckedChange={(checked) =>
-                        questionModified((data.drag = !checked as boolean))
-                    }
-                />
-                )
-            </SidebarMenuItem>
             <LatitudeLongitude
                 latitude={data.lat}
                 longitude={data.lng}
+                colorName={data.color}
                 onChange={(lat, lng) => {
                     if (lat !== null) {
                         data.lat = lat;
@@ -277,6 +341,68 @@ export const MeasuringQuestionComponent = ({
                 }}
                 disabled={!data.drag || $isLoading}
             />
+            <div className="flex gap-2 items-center p-2">
+                <Label
+                    className={cn(
+                        "font-semibold text-lg",
+                        $isLoading && "text-muted-foreground",
+                    )}
+                >
+                    Result
+                </Label>
+                <ToggleGroup
+                    className="grow"
+                    type="single"
+                    value={data.hiderCloser ? "closer" : "further"}
+                    onValueChange={(value: "closer" | "further") =>
+                        questionModified(
+                            (data.hiderCloser = value === "closer"),
+                        )
+                    }
+                    disabled={!!$hiderMode || !data.drag || $isLoading}
+                >
+                    <ToggleGroupItem value="further">
+                        Hider Further
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="closer">
+                        Hider Closer
+                    </ToggleGroupItem>
+                </ToggleGroup>
+            </div>
         </QuestionCard>
+    );
+};
+
+const AdminZoneNameDisplay = ({ data }: { data: MeasuringQuestion }) => {
+    useStore(triggerLocalRefresh);
+
+    const adminLevel = (data as any).cat?.adminLevel ?? 4;
+    const zoneInfo = use(findAdminZoneInfo(data.lat, data.lng, adminLevel));
+
+    // Update the zone name in the data
+    if (
+        zoneInfo &&
+        (data as any).cat &&
+        (data as any).cat.zoneName !== zoneInfo.name
+    ) {
+        (data as any).cat.zoneName = zoneInfo.name;
+        questionModified();
+    }
+
+    if (!zoneInfo) {
+        return (
+            <div className="flex items-center justify-center w-full h-[3rem] text-muted-foreground text-sm">
+                No zone found
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex flex-col items-center w-full h-[3rem]">
+            <Label className="text-xs text-muted-foreground">Zone</Label>
+            <span className="font-medium text-sm truncate max-w-full">
+                {zoneInfo.name}
+            </span>
+        </div>
     );
 };

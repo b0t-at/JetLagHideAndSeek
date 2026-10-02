@@ -1,48 +1,48 @@
-import { Suspense, use } from "react";
-import { LatitudeLongitude } from "../LatLngPicker";
 import { useStore } from "@nanostores/react";
-import { cn } from "../../lib/utils";
+import * as turf from "@turf/turf";
+import { Suspense, use, useEffect, useState } from "react";
+
+import { LatitudeLongitude } from "@/components/LatLngPicker";
+import PresetsDialog from "@/components/PresetsDialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import {
+    MENU_ITEM_CLASSNAME,
+    SidebarMenuItem,
+} from "@/components/ui/sidebar-l";
+import { UnitSelect } from "@/components/UnitSelect";
 import {
     drawingQuestionKey,
     hiderMode,
+    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
-    isLoading,
-} from "../../lib/context";
-import { findTentacleLocations, iconColors } from "../../maps/api";
-import { MENU_ITEM_CLASSNAME, SidebarMenuItem } from "../ui/sidebar-l";
-import { Input } from "../ui/input";
+} from "@/lib/context";
+import { cn, mapToObj } from "@/lib/utils";
+import { findTentacleLocations } from "@/maps/api";
+import { arcDistance } from "@/maps/geo-utils";
 import {
-    Select,
-    SelectContent,
-    SelectGroup,
-    SelectItem,
-    SelectLabel,
-    SelectTrigger,
-    SelectValue,
-} from "../ui/select";
-import { Checkbox } from "../ui/checkbox";
+    determineUnionizedStrings,
+    NO_GROUP,
+    type TentacleQuestion,
+    tentacleQuestionSchema,
+    type TraditionalTentacleQuestion,
+} from "@/maps/schema";
+
 import { QuestionCard } from "./base";
-import type {
-    TentacleQuestion,
-    TraditionalTentacleQuestion,
-} from "@/lib/schema";
-import { UnitSelect } from "../UnitSelect";
-import * as turf from "@turf/turf";
 
 export const TentacleQuestionComponent = ({
     data,
     questionKey,
     sub,
     className,
-    showDeleteButton = true,
 }: {
     data: TentacleQuestion;
     questionKey: number;
     sub?: string;
     className?: string;
-    showDeleteButton?: boolean;
 }) => {
     const $questions = useStore(questions);
     const $drawingQuestionKey = useStore(drawingQuestionKey);
@@ -61,7 +61,14 @@ export const TentacleQuestionComponent = ({
             label={label}
             sub={sub}
             className={className}
-            showDeleteButton={showDeleteButton}
+            collapsed={data.collapsed}
+            setCollapsed={(collapsed) => {
+                data.collapsed = collapsed; // Doesn't trigger a re-render so no need for questionModified
+            }}
+            locked={!data.drag}
+            setLocked={(locked) => questionModified((data.drag = !locked))}
+            hidden={data.hidden}
+            setHidden={(hidden) => questionModified((data.hidden = !hidden))}
         >
             <SidebarMenuItem>
                 <div className={cn(MENU_ITEM_CLASSNAME, "gap-2 flex flex-row")}>
@@ -87,6 +94,30 @@ export const TentacleQuestionComponent = ({
             </SidebarMenuItem>
             <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
                 <Select
+                    trigger="Location Type"
+                    options={Object.fromEntries(
+                        tentacleQuestionSchema.options
+                            .filter((x) => x.description === NO_GROUP)
+                            .flatMap((x) =>
+                                determineUnionizedStrings(x.shape.locationType),
+                            )
+                            .map((x) => [(x._def as any).value, x.description]),
+                    )}
+                    groups={Object.fromEntries(
+                        tentacleQuestionSchema.options
+                            .filter((x) => x.description !== NO_GROUP)
+                            .map((x) => [
+                                x.description,
+                                Object.fromEntries(
+                                    determineUnionizedStrings(
+                                        x.shape.locationType,
+                                    ).map((x) => [
+                                        (x._def as any).value,
+                                        x.description,
+                                    ]),
+                                ),
+                            ]),
+                    )}
                     value={data.locationType}
                     onValueChange={async (value) => {
                         if (value === "custom") {
@@ -107,78 +138,43 @@ export const TentacleQuestionComponent = ({
                             data.location = false;
                         } else {
                             data.location = false;
-                            data.locationType = value as any;
+                            data.locationType = value;
                         }
                         questionModified();
                     }}
                     disabled={!data.drag || $isLoading}
-                >
-                    <SelectTrigger>
-                        <SelectValue placeholder="Location Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="custom">Custom Locations</SelectItem>
-                        <SelectGroup>
-                            <SelectLabel>15 Miles (Typically)</SelectLabel>
-                            <SelectItem value="theme_park">
-                                Theme Parks
-                            </SelectItem>
-                            <SelectItem value="zoo">Zoos</SelectItem>
-                            <SelectItem value="aquarium">Aquariums</SelectItem>
-                        </SelectGroup>
-                        <SelectGroup>
-                            <SelectLabel>1 Mile (Typically)</SelectLabel>
-                            <SelectItem value="museum">Museums</SelectItem>
-                            <SelectItem value="hospital">Hospitals</SelectItem>
-                            <SelectItem value="cinema">
-                                Movie Theater
-                            </SelectItem>
-                            <SelectItem value="library">Library</SelectItem>
-                        </SelectGroup>
-                    </SelectContent>
-                </Select>
+                />
             </SidebarMenuItem>
             {data.locationType === "custom" && data.drag && (
-                <p className="px-2 mb-1 text-center text-orange-500">
-                    To modify tentacle locations, enable it:
-                    <Checkbox
-                        className="mx-1 my-1"
-                        checked={$drawingQuestionKey === questionKey}
-                        onCheckedChange={(checked) => {
-                            if (checked) {
-                                drawingQuestionKey.set(questionKey);
-                            } else {
-                                drawingQuestionKey.set(-1);
-                            }
-                        }}
-                        disabled={!data.drag || $isLoading}
-                    />
-                    and use the buttons at the bottom left of the map.
-                </p>
+                <>
+                    <p className="px-2 mb-1 text-center text-orange-500">
+                        To modify tentacle locations, enable it:
+                        <Checkbox
+                            className="mx-1 my-1"
+                            checked={$drawingQuestionKey === questionKey}
+                            onCheckedChange={(checked) => {
+                                if (checked) {
+                                    drawingQuestionKey.set(questionKey);
+                                } else {
+                                    drawingQuestionKey.set(-1);
+                                }
+                            }}
+                            disabled={!data.drag || $isLoading}
+                        />
+                        and use the buttons at the bottom left of the map.
+                    </p>
+                    <div className="flex justify-center mb-2">
+                        <PresetsDialog
+                            data={data}
+                            presetTypeHint="custom-tentacles"
+                        />
+                    </div>
+                </>
             )}
-            <SidebarMenuItem
-                className={cn(
-                    MENU_ITEM_CLASSNAME,
-                    "text-2xl font-semibold font-poppins",
-                )}
-                style={{
-                    backgroundColor: iconColors[data.color],
-                    color: data.color === "gold" ? "black" : undefined,
-                }}
-            >
-                Color (lock{" "}
-                <Checkbox
-                    checked={!data.drag}
-                    disabled={$isLoading}
-                    onCheckedChange={(checked) =>
-                        questionModified((data.drag = !checked as boolean))
-                    }
-                />
-                )
-            </SidebarMenuItem>
             <LatitudeLongitude
                 latitude={data.lat}
                 longitude={data.lng}
+                colorName={data.color}
                 onChange={(lat, lng) => {
                     if (lat !== null) {
                         data.lat = lat;
@@ -240,15 +236,88 @@ const TentacleLocationSelector = ({
     useStore(triggerLocalRefresh);
     const $hiderMode = useStore(hiderMode);
     const locations = use(promise);
+    const [filteredFeatures, setFilteredFeatures] = useState<any[]>([]);
+
+    // Filter locations to only those within the radius of the primary location
+    useEffect(() => {
+        let cancelled = false;
+
+        const filterLocations = async () => {
+            if (
+                data.lat === null ||
+                data.lng === null ||
+                data.radius === undefined ||
+                data.radius === null
+            ) {
+                if (!cancelled) setFilteredFeatures(locations.features);
+                return;
+            }
+
+            const center = turf.point([data.lng, data.lat]);
+            const included = await Promise.all(
+                locations.features.map(async (feature: any) => {
+                    const coords =
+                        feature?.geometry?.coordinates ??
+                        (feature?.properties?.lon && feature?.properties?.lat
+                            ? [feature.properties.lon, feature.properties.lat]
+                            : null);
+
+                    if (!coords) return false;
+
+                    return (
+                        (await arcDistance(
+                            center,
+                            turf.point(coords),
+                            data.unit,
+                        )) <= data.radius
+                    );
+                }),
+            );
+            if (!cancelled) {
+                setFilteredFeatures(
+                    locations.features.filter(
+                        (_: any, index: number) => included[index],
+                    ),
+                );
+            }
+        };
+
+        filterLocations();
+        return () => {
+            cancelled = true;
+        };
+    }, [locations, data.lat, data.lng, data.radius, data.unit]);
+
+    // If the currently selected location is no longer within radius, clear it.
+    const _selectedLocationName = data.location
+        ? data.location.properties?.name
+        : null;
+    if (
+        _selectedLocationName &&
+        !filteredFeatures.find(
+            (f: any) => f.properties.name === _selectedLocationName,
+        )
+    ) {
+        data.location = false;
+        questionModified();
+    }
 
     return (
         <Select
+            trigger="Location"
+            options={{
+                false: "Not Within",
+                ...mapToObj(filteredFeatures, (feature: any) => [
+                    feature.properties.name,
+                    feature.properties.name,
+                ]),
+            }}
             value={data.location ? data.location.properties.name : "false"}
             onValueChange={(value) => {
                 if (value === "false") {
                     data.location = false;
                 } else {
-                    data.location = locations.features.find(
+                    data.location = filteredFeatures.find(
                         (feature: any) => feature.properties.name === value,
                     );
                 }
@@ -256,21 +325,6 @@ const TentacleLocationSelector = ({
                 questionModified();
             }}
             disabled={!!$hiderMode || disabled}
-        >
-            <SelectTrigger>
-                <SelectValue placeholder="Location" />
-            </SelectTrigger>
-            <SelectContent>
-                <SelectItem value="false">Not Within</SelectItem>
-                {locations.features.map((feature: any) => (
-                    <SelectItem
-                        key={feature.properties.name}
-                        value={feature.properties.name}
-                    >
-                        {feature.properties.name}
-                    </SelectItem>
-                ))}
-            </SelectContent>
-        </Select>
+        />
     );
 };

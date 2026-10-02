@@ -1,6 +1,10 @@
+import { useStore } from "@nanostores/react";
+import { SidebarCloseIcon } from "lucide-react";
+
 import {
     Sidebar,
     SidebarContent,
+    SidebarContext,
     SidebarGroup,
     SidebarGroupContent,
     SidebarMenu,
@@ -8,15 +12,14 @@ import {
     SidebarMenuItem,
 } from "@/components/ui/sidebar-l";
 import {
-    addQuestion,
     autoSave,
-    leafletMapContext,
+    isLoading,
     questions,
     save,
     triggerLocalRefresh,
-    isLoading,
-} from "../lib/context";
-import { useStore } from "@nanostores/react";
+} from "@/lib/context";
+
+import { AddQuestionDialog } from "./AddQuestionDialog";
 import {
     MatchingQuestionComponent,
     MeasuringQuestionComponent,
@@ -24,7 +27,6 @@ import {
     TentacleQuestionComponent,
     ThermometerQuestionComponent,
 } from "./QuestionCards";
-import * as turf from "@turf/turf";
 
 export const QuestionSidebar = () => {
     useStore(triggerLocalRefresh);
@@ -34,7 +36,15 @@ export const QuestionSidebar = () => {
 
     return (
         <Sidebar>
-            <h2 className="ml-4 mt-4 font-poppins text-2xl">Questions</h2>
+            <div className="flex items-center justify-between">
+                <h2 className="ml-4 mt-4 font-poppins text-2xl">Questions</h2>
+                <SidebarCloseIcon
+                    className="mr-2 visible md:hidden"
+                    onClick={() => {
+                        SidebarContext.get().setOpenMobile(false);
+                    }}
+                />
+            </div>
             <SidebarContent>
                 {$questions.map((question) => {
                     switch (question.id) {
@@ -85,124 +95,24 @@ export const QuestionSidebar = () => {
             </SidebarContent>
             <SidebarGroup>
                 <SidebarGroupContent>
-                    <SidebarMenu>
+                    <SidebarMenu data-tutorial-id="add-questions-buttons">
                         <SidebarMenuItem>
-                            <SidebarMenuButton
-                                onClick={() => {
-                                    const map = leafletMapContext.get();
-                                    if (!map) return;
-
-                                    const center = map.getCenter();
-
-                                    addQuestion({
-                                        id: "radius",
-                                        data: {
-                                            lat: center.lat,
-                                            lng: center.lng,
-                                        },
-                                    });
-                                }}
-                                disabled={$isLoading}
-                            >
-                                Add Radius
-                            </SidebarMenuButton>
+                            <AddQuestionDialog>
+                                <SidebarMenuButton disabled={$isLoading}>
+                                    Add Question
+                                </SidebarMenuButton>
+                            </AddQuestionDialog>
                         </SidebarMenuItem>
                         <SidebarMenuItem>
-                            <SidebarMenuButton
-                                onClick={() => {
-                                    const map = leafletMapContext.get();
-                                    if (!map) return;
-
-                                    const center = map.getCenter();
-
-                                    const destination = turf.destination(
-                                        [center.lng, center.lat],
-                                        5,
-                                        90,
-                                        {
-                                            units: "miles",
-                                        },
-                                    );
-
-                                    addQuestion({
-                                        id: "thermometer",
-                                        data: {
-                                            latA: center.lat,
-                                            lngB: center.lng,
-                                            latB: destination.geometry
-                                                .coordinates[1],
-                                            lngA: destination.geometry
-                                                .coordinates[0],
-                                        },
-                                    });
-                                }}
-                                disabled={$isLoading}
+                            <a
+                                href="https://github.com/taibeled/JetLagHideAndSeek"
+                                target="_blank"
+                                rel="noopener noreferrer"
                             >
-                                Add Thermometer
-                            </SidebarMenuButton>
-                        </SidebarMenuItem>
-                        <SidebarMenuItem>
-                            <SidebarMenuButton
-                                onClick={() => {
-                                    const map = leafletMapContext.get();
-                                    if (!map) return;
-
-                                    const center = map.getCenter();
-
-                                    addQuestion({
-                                        id: "tentacles",
-                                        data: {
-                                            lat: center.lat,
-                                            lng: center.lng,
-                                        },
-                                    });
-                                }}
-                                disabled={$isLoading}
-                            >
-                                Add Tentacles
-                            </SidebarMenuButton>
-                        </SidebarMenuItem>
-                        <SidebarMenuItem>
-                            <SidebarMenuButton
-                                onClick={() => {
-                                    const map = leafletMapContext.get();
-                                    if (!map) return;
-
-                                    const center = map.getCenter();
-
-                                    addQuestion({
-                                        id: "matching",
-                                        data: {
-                                            lat: center.lat,
-                                            lng: center.lng,
-                                        },
-                                    });
-                                }}
-                                disabled={$isLoading}
-                            >
-                                Add Matching
-                            </SidebarMenuButton>
-                        </SidebarMenuItem>
-                        <SidebarMenuItem>
-                            <SidebarMenuButton
-                                onClick={() => {
-                                    const map = leafletMapContext.get();
-                                    if (!map) return;
-
-                                    const center = map.getCenter();
-
-                                    addQuestion({
-                                        id: "measuring",
-                                        data: {
-                                            lat: center.lat,
-                                            lng: center.lng,
-                                        },
-                                    });
-                                }}
-                                disabled={$isLoading}
-                            >
-                                Add Measuring
-                            </SidebarMenuButton>
+                                <SidebarMenuButton className="bg-emerald-600 transition-colors">
+                                    Star this on GitHub! It&apos;s free :)
+                                </SidebarMenuButton>
+                            </a>
                         </SidebarMenuItem>
                         {!$autoSave && (
                             <SidebarMenuItem>

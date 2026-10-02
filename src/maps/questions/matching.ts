@@ -1,3 +1,15 @@
+import * as turf from "@turf/turf";
+import type {
+    Feature,
+    FeatureCollection,
+    MultiPolygon,
+    Point,
+    Polygon,
+} from "geojson";
+import _ from "lodash";
+import osmtogeojson from "osmtogeojson";
+import { toast } from "react-toastify";
+
 import {
     hiderMode,
     mapGeoJSON,
@@ -7,29 +19,18 @@ import {
 import {
     findAdminBoundary,
     findPlacesInZone,
-    locationFirstTag,
+    LOCATION_FIRST_TAG,
     nearestToQuestion,
     prettifyLocation,
     trainLineNodeFinder,
-} from "./api";
-import * as turf from "@turf/turf";
-import _ from "lodash";
-import { geoSpatialVoronoi } from "./voronoi";
-import { toast } from "react-toastify";
-import osmtogeojson from "osmtogeojson";
-import { holedMask, unionize } from "./geo-utils";
+} from "@/maps/api";
+import { holedMask, modifyMapData, safeUnion } from "@/maps/geo-utils";
+import { geoSpatialVoronoi } from "@/maps/geo-utils";
 import type {
+    APILocations,
     HomeGameMatchingQuestions,
     MatchingQuestion,
-    TentacleLocations,
-} from "@/lib/schema";
-import type {
-    Feature,
-    FeatureCollection,
-    MultiPolygon,
-    Point,
-    Polygon,
-} from "geojson";
+} from "@/maps/schema";
 
 export const findMatchingPlaces = async (question: MatchingQuestion) => {
     switch (question.type) {
@@ -68,6 +69,7 @@ export const findMatchingPlaces = async (question: MatchingQuestion) => {
         case "aquarium-full":
         case "zoo-full":
         case "theme_park-full":
+        case "peak-full":
         case "museum-full":
         case "hospital-full":
         case "cinema-full":
@@ -75,13 +77,11 @@ export const findMatchingPlaces = async (question: MatchingQuestion) => {
         case "golf_course-full":
         case "consulate-full":
         case "park-full": {
-            const location = question.type.split(
-                "-full",
-            )[0] as TentacleLocations;
+            const location = question.type.split("-full")[0] as APILocations;
 
             const data = await findPlacesInZone(
-                `[${locationFirstTag[location]}=${location}]`,
-                `Finding ${prettifyLocation(location).toLowerCase()}s...`,
+                `[${LOCATION_FIRST_TAG[location]}=${location}]`,
+                `Finding ${prettifyLocation(location, true).toLowerCase()}...`,
                 "nwr",
                 "center",
                 [],
@@ -92,7 +92,8 @@ export const findMatchingPlaces = async (question: MatchingQuestion) => {
                 toast.error(
                     `Error finding ${prettifyLocation(
                         location,
-                    ).toLowerCase()}s. Please enable hiding zone mode and switch to the Large Game variation of this question.`,
+                        true,
+                    ).toLowerCase()}. Please enable hiding zone mode and switch to the Large Game variation of this question.`,
                 );
                 return [];
             }
@@ -101,7 +102,8 @@ export const findMatchingPlaces = async (question: MatchingQuestion) => {
                 toast.error(
                     `Too many ${prettifyLocation(
                         location,
-                    ).toLowerCase()}s found (${data.elements.length}). Please enable hiding zone mode and switch to the Large Game variation of this question.`,
+                        true,
+                    ).toLowerCase()} found (${data.elements.length}). Please enable hiding zone mode and switch to the Large Game variation of this question.`,
                 );
                 return [];
             }
@@ -124,6 +126,7 @@ export const determineMatchingBoundary = _.memoize(
             case "aquarium":
             case "zoo":
             case "theme_park":
+            case "peak":
             case "museum":
             case "hospital":
             case "cinema":
@@ -200,7 +203,7 @@ export const determineMatchingBoundary = _.memoize(
                 );
 
                 // It's either simplify or crash. Technically this could be bad if someone's hiding zone was inside multiple zones, but that's unlikely.
-                boundary = unionize(
+                boundary = safeUnion(
                     turf.simplify(boundary, {
                         tolerance: 0.001,
                         highQuality: true,
@@ -215,6 +218,7 @@ export const determineMatchingBoundary = _.memoize(
             case "aquarium-full":
             case "zoo-full":
             case "theme_park-full":
+            case "peak-full":
             case "museum-full":
             case "hospital-full":
             case "cinema-full":
@@ -256,15 +260,8 @@ export const determineMatchingBoundary = _.memoize(
 export const adjustPerMatching = async (
     question: MatchingQuestion,
     mapData: any,
-    masked: boolean,
 ) => {
     if (mapData === null) return;
-
-    if (question.same && masked) {
-        throw new Error("Cannot be masked");
-    } else if (!question.same && !masked) {
-        throw new Error("Must be masked");
-    }
 
     const boundary = await determineMatchingBoundary(question);
 
@@ -272,15 +269,7 @@ export const adjustPerMatching = async (
         return mapData;
     }
 
-    if (question.same) {
-        return turf.intersect(
-            turf.featureCollection([unionize(mapData), boundary]),
-        );
-    } else {
-        return turf.union(
-            turf.featureCollection([...mapData.features, boundary]),
-        );
-    }
+    return modifyMapData(mapData, boundary, question.same);
 };
 
 export const hiderifyMatching = async (question: MatchingQuestion) => {
@@ -294,6 +283,7 @@ export const hiderifyMatching = async (question: MatchingQuestion) => {
             "aquarium",
             "zoo",
             "theme_park",
+            "peak",
             "museum",
             "hospital",
             "cinema",
@@ -313,6 +303,7 @@ export const hiderifyMatching = async (question: MatchingQuestion) => {
             type: (question as HomeGameMatchingQuestions).type,
             drag: false,
             color: "black",
+            collapsed: false,
         });
 
         question.same =
@@ -384,9 +375,11 @@ export const hiderifyMatching = async (question: MatchingQuestion) => {
             }
         } else if (question.type === "same-length-station") {
             if (hiderEnglishName.length === seekerEnglishName.length) {
-                question.same = true;
+                question.lengthComparison = "same";
+            } else if (hiderEnglishName.length < seekerEnglishName.length) {
+                question.lengthComparison = "shorter";
             } else {
-                question.same = false;
+                question.lengthComparison = "longer";
             }
         }
 
@@ -399,18 +392,16 @@ export const hiderifyMatching = async (question: MatchingQuestion) => {
     let feature = null;
 
     try {
-        feature = holedMask(
-            (await adjustPerMatching(question, $mapGeoJSON, false))!,
-        );
+        feature = holedMask((await adjustPerMatching(question, $mapGeoJSON))!);
     } catch {
-        feature = await adjustPerMatching(
-            question,
-            {
+        try {
+            feature = await adjustPerMatching(question, {
                 type: "FeatureCollection",
                 features: [holedMask($mapGeoJSON)],
-            },
-            true,
-        );
+            });
+        } catch {
+            return question;
+        }
     }
 
     if (feature === null || feature === undefined) return question;
