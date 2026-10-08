@@ -129,9 +129,11 @@ onSet(trainStations, ({ newValue }) => {
     });
 });
 
+// This fork always plays with a custom station list; the OSM station types
+// are hidden in the UI, so stored or shared settings must not switch back.
 export const useCustomStations = persistentAtom<boolean>(
     "useCustomStations",
-    false,
+    true,
     {
         encode: JSON.stringify,
         decode: JSON.parse,
@@ -161,6 +163,8 @@ export const includeDefaultStations = persistentAtom<boolean>(
         decode: JSON.parse,
     },
 );
+useCustomStations.set(true);
+includeDefaultStations.set(false);
 export const animateMapMovements = persistentAtom<boolean>(
     "animateMapMovements",
     false,

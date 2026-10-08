@@ -30,7 +30,6 @@ import {
     hidingRadius,
     hidingRadiusUnits,
     hidingZone,
-    includeDefaultStations,
     leafletMapContext,
     mapGeoJSON,
     mapGeoLocation,
@@ -45,7 +44,6 @@ import {
     showTutorial,
     thunderforestApiKey,
     triggerLocalRefresh,
-    useCustomStations,
 } from "@/lib/context";
 import {
     cn,
@@ -306,19 +304,11 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                 displayHidingZonesOptions.set(geojson.zoneOptions ?? []);
             }
 
-            if (typeof geojson.useCustomStations === "boolean") {
-                useCustomStations.set(geojson.useCustomStations);
-            }
-
             if (
                 geojson.customStations &&
                 geojson.customStations.constructor === Array
             ) {
                 customStations.set(geojson.customStations);
-            }
-
-            if (typeof geojson.includeDefaultStations === "boolean") {
-                includeDefaultStations.set(geojson.includeDefaultStations);
             }
 
             if (geojson.permanentOverlay) {
