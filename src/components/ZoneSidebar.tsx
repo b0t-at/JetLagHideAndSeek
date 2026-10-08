@@ -1,11 +1,20 @@
 import { useStore } from "@nanostores/react";
 import * as turf from "@turf/turf";
-import type { Feature, FeatureCollection } from "geojson";
-import * as L from "leaflet";
+import { defaultFilter } from "cmdk";
+import type { Feature, MultiPolygon, Polygon, Position } from "geojson";
+import type * as L from "leaflet";
 import _ from "lodash";
 import { SidebarCloseIcon } from "lucide-react";
 import osmtogeojson from "osmtogeojson";
-import { useEffect, useRef, useState } from "react";
+import {
+    memo,
+    useCallback,
+    useDeferredValue,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import { toast } from "react-toastify";
 
 import {
@@ -47,7 +56,6 @@ import {
     normalizeToStationFeatures,
     parseCustomStationsFromText,
     QuestionSpecificLocation,
-    type StationCircle,
     type StationPlace,
     trainLineNodeFinder,
 } from "@/maps/api";
@@ -57,11 +65,15 @@ import {
     extractStationName,
     geoSpatialVoronoi,
     holedMask,
-    lngLatToText,
     mergeDuplicateStation,
     safeUnion,
 } from "@/maps/geo-utils";
 
+import {
+    clearHidingZones,
+    drawHidingZoneGeoJSON,
+    drawHidingZones,
+} from "./hidingZoneLayers";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import {
@@ -84,6 +96,67 @@ function _previewText(count: number) {
 
 let buttonJustClicked = false;
 
+/** Rows rendered in the station list before "Show all"; searching narrows the list */
+const STATION_LIST_LIMIT = 100;
+
+const toggleStationSoon = (id: string) => {
+    if (!leafletMapContext.get()) return;
+
+    // Gives the "View" button's click a chance to cancel the toggle
+    setTimeout(() => {
+        if (buttonJustClicked) {
+            buttonJustClicked = false;
+            return;
+        }
+
+        const current = disabledStations.get();
+        disabledStations.set(
+            current.includes(id)
+                ? current.filter((x) => x !== id)
+                : [...current, id],
+        );
+    }, 100);
+};
+
+const StationRow = memo(function StationRow({
+    id,
+    label,
+    struck,
+    loading,
+    onView,
+}: {
+    id: string;
+    label: string;
+    struck: boolean;
+    loading: boolean;
+    onView: (id: string) => void;
+}) {
+    return (
+        <CommandItem
+            data-station-id={id}
+            value={id}
+            className={cn(struck && "line-through")}
+            onSelect={() => toggleStationSoon(id)}
+            disabled={loading}
+        >
+            {label}
+            <button
+                onClick={() => {
+                    if (!leafletMapContext.get()) return;
+
+                    buttonJustClicked = true;
+
+                    onView(id);
+                }}
+                className="bg-slate-600 p-0.5 rounded-md"
+                disabled={loading}
+            >
+                View
+            </button>
+        </CommandItem>
+    );
+});
+
 export const ZoneSidebar = () => {
     const $displayHidingZones = useStore(displayHidingZones);
     const $questionFinishedMapData = useStore(questionFinishedMapData);
@@ -102,74 +175,68 @@ export const ZoneSidebar = () => {
     const [hidingZoneModeStationID, setHidingZoneModeStationID] =
         useState<string>("");
     const [stationSearch, setStationSearch] = useState<string>("");
-    const isStationSearchActive = stationSearch.trim().length > 0;
+    const deferredStationSearch = useDeferredValue(stationSearch);
+    const [showAllStations, setShowAllStations] = useState(false);
     const setStations = trainStations.set;
     const sidebarRef = useRef<HTMLDivElement>(null);
     const [importUrl, setImportUrl] = useState("");
+    // The last selected hiding zone that was drawn, and a token so only the newest selection run draws
+    const drawnSelection = useRef<{ id: string; stations: unknown } | null>(
+        null,
+    );
+    const selectionRun = useRef(0);
 
-    const removeHidingZones = () => {
-        if (!map) return;
+    const labelledStations = useMemo(
+        () =>
+            stations.map((station) => ({
+                id: station.properties.properties.id as string,
+                label: extractStationLabel(station.properties) as string,
+            })),
+        [stations],
+    );
 
-        map.eachLayer((layer: any) => {
-            if (layer.hidingZones) {
-                // Hopefully only geoJSON layers
-                map.removeLayer(layer);
-            }
-        });
-    };
+    // Same matches and order as cmdk's own filter, without remounting the list
+    const matchingStations = useMemo(() => {
+        const search = deferredStationSearch.trim();
+        if (!search) return labelledStations;
 
-    const showGeoJSON = (
-        geoJSONData: any,
-        nonOverlappingStations: boolean = false,
-        additionalOptions: L.GeoJSONOptions = {},
-    ) => {
-        if (!map) return;
+        return labelledStations
+            .map((station) => ({
+                station,
+                score: defaultFilter!(station.label ?? "", search),
+            }))
+            .filter((x) => x.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .map((x) => x.station);
+    }, [labelledStations, deferredStationSearch]);
 
-        removeHidingZones();
+    const shownStations = useMemo(() => {
+        if (showAllStations || matchingStations.length <= STATION_LIST_LIMIT)
+            return matchingStations;
 
-        const geoJsonLayer = L.geoJSON(geoJSONData, {
-            style: {
-                color: "green",
-                fillColor: "green",
-                fillOpacity: 0.2,
-            },
-            onEachFeature: nonOverlappingStations
-                ? (feature, layer) => {
-                      layer.on("click", async () => {
-                          if (!map) return;
+        const shown = matchingStations.slice(0, STATION_LIST_LIMIT);
+        // The selected hiding zone's row must exist so it can be scrolled to
+        if (
+            hidingZoneModeStationID &&
+            !shown.some((x) => x.id === hidingZoneModeStationID)
+        ) {
+            const selected = matchingStations.find(
+                (x) => x.id === hidingZoneModeStationID,
+            );
+            if (selected) shown.push(selected);
+        }
+        return shown;
+    }, [matchingStations, showAllStations, hidingZoneModeStationID]);
 
-                          setHidingZoneModeStationID(
-                              feature.properties.properties.id,
-                          );
-                      });
-                  }
-                : undefined,
-            pointToLayer(geoJsonPoint, latlng) {
-                const marker = L.marker(latlng, {
-                    icon: L.divIcon({
-                        html: `<div class="text-black bg-opacity-0"><svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 448 512" width="1em" height="1em" xmlns="http://www.w3.org/2000/svg"><path d="M96 0C43 0 0 43 0 96L0 352c0 48 35.2 87.7 81.1 94.9l-46 46C28.1 499.9 33.1 512 43 512l39.7 0c8.5 0 16.6-3.4 22.6-9.4L160 448l128 0 54.6 54.6c6 6 14.1 9.4 22.6 9.4l39.7 0c10 0 15-12.1 7.9-19.1l-46-46c46-7.1 81.1-46.9 81.1-94.9l0-256c0-53-43-96-96-96L96 0zM64 96c0-17.7 14.3-32 32-32l256 0c17.7 0 32 14.3 32 32l0 96c0 17.7-14.3 32-32 32L96 224c-17.7 0-32-14.3-32-32l0-96zM224 288a48 48 0 1 1 0 96 48 48 0 1 1 0-96z"></path></svg></div>`,
-                        className: "",
-                    }),
-                });
+    const disabledStationSet = useMemo(
+        () => new Set($disabledStations),
+        [$disabledStations],
+    );
 
-                marker.bindPopup(
-                    `<b>${
-                        extractStationName(geoJsonPoint) || "No Name Found"
-                    } (${lngLatToText(
-                        geoJsonPoint.geometry.coordinates as [number, number],
-                    )})</b>`,
-                );
-
-                return marker;
-            },
-            ...additionalOptions,
-        });
-
-        // @ts-expect-error This is intentionally added as a check
-        geoJsonLayer.hidingZones = true;
-
-        geoJsonLayer.addTo(map);
-    };
+    const viewStation = useCallback(
+        (id: string) => setHidingZoneModeStationID(id),
+        [],
+    );
 
     useEffect(() => {
         if (!map || isLoading.get()) return;
@@ -469,6 +536,8 @@ export const ZoneSidebar = () => {
         mergeDuplicates,
     ]);
 
+    // Question data and the radius reach this effect through `stations`: the effect above
+    // recomputes them whenever those change, so listing them here would draw twice
     useEffect(() => {
         if (!map || isLoading.get()) return;
 
@@ -479,13 +548,30 @@ export const ZoneSidebar = () => {
             );
 
             if (hiderStation !== undefined) {
+                // Disabling a station doesn't change the selected zone
+                if (
+                    drawnSelection.current?.id === hidingZoneModeStationID &&
+                    drawnSelection.current.stations === stations
+                ) {
+                    return;
+                }
+                drawnSelection.current = {
+                    id: hidingZoneModeStationID,
+                    stations,
+                };
+
+                const run = ++selectionRun.current;
                 selectionProcess(
                     hiderStation,
                     map,
                     stations,
-                    showGeoJSON,
-                    $questionFinishedMapData,
-                    hidingRadiusInMiles($hidingRadius, $hidingRadiusUnits),
+                    (geoJSONData) => drawHidingZoneGeoJSON(map, geoJSONData),
+                    questionFinishedMapData.get(),
+                    hidingRadiusInMiles(
+                        hidingRadius.get(),
+                        hidingRadiusUnits.get(),
+                    ),
+                    () => run === selectionRun.current,
                 ).catch((error) => {
                     console.log("Error in hiding zone selection:", error);
                     toast.error(
@@ -498,24 +584,26 @@ export const ZoneSidebar = () => {
                     toastId: "hiding-zone-selection-error",
                 });
             }
-        } else if ($displayHidingZones) {
-            const activeStations = stations.filter(
-                (x) => !$disabledStations.includes(x.properties.properties.id),
-            );
-            showGeoJSON(
-                styleStations(activeStations, $displayHidingZonesStyle),
-                $displayHidingZonesStyle === "zones",
-            );
         } else {
-            removeHidingZones();
+            drawnSelection.current = null;
+            selectionRun.current++;
+
+            if ($displayHidingZones) {
+                drawHidingZones(
+                    map,
+                    stations,
+                    $disabledStations,
+                    $displayHidingZonesStyle,
+                    viewStation,
+                );
+            } else {
+                clearHidingZones(map);
+            }
         }
     }, [
         $disabledStations,
         $displayHidingZones,
         $displayHidingZonesStyle,
-        $hidingRadius,
-        $hidingRadiusUnits,
-        $questionFinishedMapData,
         hidingZoneModeStationID,
         stations,
     ]);
@@ -727,9 +815,17 @@ export const ZoneSidebar = () => {
                                         className="rounded-md p-2 w-16"
                                         value={$hidingRadius}
                                         onChange={(e) => {
-                                            hidingRadius.set(
-                                                parseFloat(e.target.value),
+                                            // The input is debounced; ignore a cleared or partial value such as "" or "0."
+                                            const radius = parseFloat(
+                                                e.target.value,
                                             );
+                                            if (
+                                                Number.isFinite(radius) &&
+                                                radius > 0 &&
+                                                radius !== hidingRadius.get()
+                                            ) {
+                                                hidingRadius.set(radius);
+                                            }
                                         }}
                                         disabled={$isLoading}
                                     />
@@ -864,18 +960,14 @@ export const ZoneSidebar = () => {
                                 </SidebarMenuItem>
                             )}
                             {$displayHidingZones && (
-                                <Command
-                                    key={
-                                        isStationSearchActive
-                                            ? "station-search-active"
-                                            : "station-search-idle"
-                                    }
-                                    shouldFilter={isStationSearchActive}
-                                >
+                                <Command shouldFilter={false}>
                                     <CommandInput
                                         placeholder="Search for a hiding zone..."
                                         value={stationSearch}
-                                        onValueChange={setStationSearch}
+                                        onValueChange={(search) => {
+                                            setStationSearch(search);
+                                            setShowAllStations(false);
+                                        }}
                                         disabled={$isLoading}
                                     />
                                     <CommandList className="max-h-full">
@@ -883,100 +975,33 @@ export const ZoneSidebar = () => {
                                             No hiding zones found.
                                         </CommandEmpty>
                                         <CommandGroup>
-                                            {stations.map((station) => (
-                                                <CommandItem
-                                                    key={
-                                                        station.properties
-                                                            .properties.id
-                                                    }
-                                                    data-station-id={
-                                                        station.properties
-                                                            .properties.id
-                                                    }
-                                                    className={cn(
-                                                        $disabledStations.includes(
-                                                            station.properties
-                                                                .properties.id,
-                                                        ) && "line-through",
+                                            {shownStations.map((station) => (
+                                                <StationRow
+                                                    key={station.id}
+                                                    id={station.id}
+                                                    label={station.label}
+                                                    struck={disabledStationSet.has(
+                                                        station.id,
                                                     )}
-                                                    onSelect={async () => {
-                                                        if (!map) return;
-
-                                                        setTimeout(() => {
-                                                            if (
-                                                                buttonJustClicked
-                                                            ) {
-                                                                buttonJustClicked =
-                                                                    false;
-                                                                return;
-                                                            }
-
-                                                            if (
-                                                                $disabledStations.includes(
-                                                                    station
-                                                                        .properties
-                                                                        .properties
-                                                                        .id,
-                                                                )
-                                                            ) {
-                                                                disabledStations.set(
-                                                                    [
-                                                                        ...$disabledStations.filter(
-                                                                            (
-                                                                                x,
-                                                                            ) =>
-                                                                                x !==
-                                                                                station
-                                                                                    .properties
-                                                                                    .properties
-                                                                                    .id,
-                                                                        ),
-                                                                    ],
-                                                                );
-                                                            } else {
-                                                                disabledStations.set(
-                                                                    [
-                                                                        ...$disabledStations,
-                                                                        station
-                                                                            .properties
-                                                                            .properties
-                                                                            .id,
-                                                                    ],
-                                                                );
-                                                            }
-
-                                                            setStations([
-                                                                ...stations,
-                                                            ]);
-                                                        }, 100);
-                                                    }}
-                                                    disabled={$isLoading}
-                                                >
-                                                    {extractStationLabel(
-                                                        station.properties,
-                                                    )}
-                                                    <button
-                                                        onClick={async () => {
-                                                            if (!map) return;
-
-                                                            buttonJustClicked =
-                                                                true;
-
-                                                            setHidingZoneModeStationID(
-                                                                station
-                                                                    .properties
-                                                                    .properties
-                                                                    .id,
-                                                            );
-                                                        }}
-                                                        className="bg-slate-600 p-0.5 rounded-md"
-                                                        disabled={$isLoading}
-                                                    >
-                                                        View
-                                                    </button>
-                                                </CommandItem>
+                                                    loading={$isLoading}
+                                                    onView={viewStation}
+                                                />
                                             ))}
                                         </CommandGroup>
+                                        {shownStations.length <
+                                            matchingStations.length && (
+                                            <button
+                                                className="w-full p-2 text-sm text-muted-foreground"
+                                                onClick={() =>
+                                                    setShowAllStations(true)
+                                                }
+                                            >
+                                                Showing {shownStations.length}{" "}
+                                                of {matchingStations.length}.
+                                                Search to narrow down, or tap to
+                                                show all.
+                                            </button>
+                                        )}
                                     </CommandList>
                                 </Command>
                             )}
@@ -987,25 +1012,6 @@ export const ZoneSidebar = () => {
         </Sidebar>
     );
 };
-
-function styleStations(
-    circles: StationCircle[],
-    style: string,
-): FeatureCollection | Feature {
-    switch (style) {
-        case "no-display":
-            return { type: "FeatureCollection", features: [] };
-
-        case "no-overlap":
-            return safeUnion(turf.featureCollection(circles));
-
-        case "stations":
-            return turf.featureCollection(circles.map((c) => c.properties));
-
-        default:
-            return turf.featureCollection(circles);
-    }
-}
 
 const warnNoSpecificPlaces = (type: "mcdonalds" | "seven11") =>
     toast.warning(
@@ -1019,6 +1025,33 @@ const hidingRadiusInMiles = (radius: number, units: turf.Units) =>
         ? turf.convertLength(radius, units, "miles")
         : 0;
 
+/** The part of a (multi)polygon inside the station's bbox (plus a margin); [] when nothing is left */
+const clipToStation = (
+    feature: Feature<Polygon | MultiPolygon>,
+    station: Feature<Polygon>,
+): Feature<Polygon | MultiPolygon>[] => {
+    const [minX, minY, maxX, maxY] = turf.bbox(station);
+    const pad = Math.max(maxX - minX, maxY - minY) * 0.1;
+    const geometry = turf.bboxClip(feature, [
+        minX - pad,
+        minY - pad,
+        maxX + pad,
+        maxY + pad,
+    ]).geometry as Polygon | MultiPolygon;
+    const polygons: Position[][][] = (
+        geometry.type === "Polygon"
+            ? [geometry.coordinates]
+            : geometry.coordinates
+    ).filter((polygon) => polygon.length > 0);
+
+    if (polygons.length === 0) return [];
+    return [
+        polygons.length === 1
+            ? turf.polygon(polygons[0])
+            : turf.multiPolygon(polygons),
+    ];
+};
+
 async function selectionProcess(
     station: any,
     map: L.Map,
@@ -1026,6 +1059,8 @@ async function selectionProcess(
     showGeoJSON: (geoJSONData: any) => void,
     $questionFinishedMapData: any,
     hidingRadiusMiles: number,
+    // False once a newer selection started: then this run must not draw, move the map or scroll
+    isCurrent: () => boolean,
 ) {
     const bbox = turf.bbox(station);
 
@@ -1034,10 +1069,14 @@ async function selectionProcess(
         [bbox[3], bbox[2]],
     ];
 
+    // mask(station) already covers everything outside the station's bbox, so the eliminated
+    // area only matters inside it; clipping it first keeps this union small (same result)
     let mapData: any = turf.featureCollection([
         safeUnion(
             turf.featureCollection([
-                ...$questionFinishedMapData.features,
+                ...$questionFinishedMapData.features.flatMap((feature: any) =>
+                    clipToStation(feature, station),
+                ),
                 turf.mask(station),
             ]),
         ),
@@ -1304,6 +1343,8 @@ async function selectionProcess(
             };
         }
     }
+
+    if (!isCurrent()) return;
 
     if (_.isEqual(mapData, BLANK_GEOJSON)) {
         toast.warning(

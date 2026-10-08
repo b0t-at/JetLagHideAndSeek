@@ -732,11 +732,11 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                                     }
                                                 });
                                             }
-                                        } else {
-                                            questions.set([...questions.get()]); // I think that this should always be auto-saved
                                         }
 
                                         planningModeEnabled.set(!$planningMode);
+                                        // Redraw with the new planning state, both when turning it on and off
+                                        questions.set([...questions.get()]); // I think that this should always be auto-saved
                                     }}
                                 />
                             </div>

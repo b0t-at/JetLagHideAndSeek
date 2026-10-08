@@ -24,8 +24,9 @@ import {
     prettifyLocation,
     trainLineNodeFinder,
 } from "@/maps/api";
-import { holedMask, modifyMapData, safeUnion } from "@/maps/geo-utils";
+import { modifyMapData, safeUnion } from "@/maps/geo-utils";
 import { geoSpatialVoronoi } from "@/maps/geo-utils";
+import { hiderInRegion } from "@/maps/questions/hider";
 import type {
     APILocations,
     HomeGameMatchingQuestions,
@@ -388,31 +389,20 @@ export const hiderifyMatching = async (question: MatchingQuestion) => {
         return question;
     }
 
-    const $mapGeoJSON = mapGeoJSON.get();
-    if ($mapGeoJSON === null) return question;
+    if (mapGeoJSON.get() === null) return question;
 
-    let feature = null;
-
+    // A point test against the (memoized) region answers this, no need to
+    // clip the play area
+    let boundary;
     try {
-        feature = holedMask((await adjustPerMatching(question, $mapGeoJSON))!);
+        boundary = await determineMatchingBoundary(question);
     } catch {
-        try {
-            feature = await adjustPerMatching(question, {
-                type: "FeatureCollection",
-                features: [holedMask($mapGeoJSON)],
-            });
-        } catch {
-            return question;
-        }
+        return question;
     }
+    if (!boundary) return question;
 
-    if (feature === null || feature === undefined) return question;
-
-    const hiderPoint = turf.point([$hiderMode.longitude, $hiderMode.latitude]);
-
-    if (turf.booleanPointInPolygon(hiderPoint, feature)) {
-        question.same = !question.same;
-    }
+    const same = hiderInRegion($hiderMode, boundary);
+    if (same !== undefined) question.same = same;
 
     return question;
 };

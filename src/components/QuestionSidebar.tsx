@@ -2,7 +2,6 @@ import { useStore } from "@nanostores/react";
 import { SidebarCloseIcon } from "lucide-react";
 
 import {
-    Sidebar,
     SidebarContent,
     SidebarContext,
     SidebarGroup,
@@ -27,15 +26,19 @@ import {
     TentacleQuestionComponent,
     ThermometerQuestionComponent,
 } from "./QuestionCards";
+import { QuestionSidebarShell } from "./QuestionSidebarShell";
 
 export const QuestionSidebar = () => {
+    // Question data is mutated in place, so this re-renders on every change.
+    // The cards are memoized on a snapshot of their data and the label index,
+    // so only the card whose question changed re-renders.
     useStore(triggerLocalRefresh);
     const $questions = useStore(questions);
     const $autoSave = useStore(autoSave);
-    const $isLoading = useStore(isLoading);
+    const typeCounts: Record<string, number> = {};
 
     return (
-        <Sidebar>
+        <QuestionSidebarShell>
             <div className="flex items-center justify-between">
                 <h2 className="ml-4 mt-4 font-poppins text-2xl">Questions</h2>
                 <SidebarCloseIcon
@@ -47,6 +50,9 @@ export const QuestionSidebar = () => {
             </div>
             <SidebarContent>
                 {$questions.map((question) => {
+                    const index = (typeCounts[question.id] =
+                        (typeCounts[question.id] ?? 0) + 1);
+                    const snapshot = JSON.stringify(question.data);
                     switch (question.id) {
                         case "radius":
                             return (
@@ -54,6 +60,8 @@ export const QuestionSidebar = () => {
                                     data={question.data}
                                     key={question.key}
                                     questionKey={question.key}
+                                    index={index}
+                                    snapshot={snapshot}
                                 />
                             );
                         case "thermometer":
@@ -62,6 +70,8 @@ export const QuestionSidebar = () => {
                                     data={question.data}
                                     key={question.key}
                                     questionKey={question.key}
+                                    index={index}
+                                    snapshot={snapshot}
                                 />
                             );
                         case "tentacles":
@@ -70,6 +80,8 @@ export const QuestionSidebar = () => {
                                     data={question.data}
                                     key={question.key}
                                     questionKey={question.key}
+                                    index={index}
+                                    snapshot={snapshot}
                                 />
                             );
                         case "matching":
@@ -78,6 +90,8 @@ export const QuestionSidebar = () => {
                                     data={question.data}
                                     key={question.key}
                                     questionKey={question.key}
+                                    index={index}
+                                    snapshot={snapshot}
                                 />
                             );
                         case "measuring":
@@ -86,6 +100,8 @@ export const QuestionSidebar = () => {
                                     data={question.data}
                                     key={question.key}
                                     questionKey={question.key}
+                                    index={index}
+                                    snapshot={snapshot}
                                 />
                             );
                         default:
@@ -97,11 +113,7 @@ export const QuestionSidebar = () => {
                 <SidebarGroupContent>
                     <SidebarMenu data-tutorial-id="add-questions-buttons">
                         <SidebarMenuItem>
-                            <AddQuestionDialog>
-                                <SidebarMenuButton disabled={$isLoading}>
-                                    Add Question
-                                </SidebarMenuButton>
-                            </AddQuestionDialog>
+                            <AddQuestionButton />
                         </SidebarMenuItem>
                         <SidebarMenuItem>
                             <a
@@ -116,18 +128,40 @@ export const QuestionSidebar = () => {
                         </SidebarMenuItem>
                         {!$autoSave && (
                             <SidebarMenuItem>
-                                <SidebarMenuButton
-                                    className="bg-blue-600 p-2 rounded-md font-semibold font-poppins transition-shadow duration-500"
-                                    onClick={save}
-                                    disabled={$isLoading}
-                                >
-                                    Save
-                                </SidebarMenuButton>
+                                <SaveButton />
                             </SidebarMenuItem>
                         )}
                     </SidebarMenu>
                 </SidebarGroupContent>
             </SidebarGroup>
-        </Sidebar>
+        </QuestionSidebarShell>
+    );
+};
+
+// These subscribe to isLoading themselves, so a loading flip does not
+// re-render the whole sidebar
+const AddQuestionButton = () => {
+    const $isLoading = useStore(isLoading);
+
+    return (
+        <AddQuestionDialog>
+            <SidebarMenuButton disabled={$isLoading}>
+                Add Question
+            </SidebarMenuButton>
+        </AddQuestionDialog>
+    );
+};
+
+const SaveButton = () => {
+    const $isLoading = useStore(isLoading);
+
+    return (
+        <SidebarMenuButton
+            className="bg-blue-600 p-2 rounded-md font-semibold font-poppins transition-shadow duration-500"
+            onClick={save}
+            disabled={$isLoading}
+        >
+            Save
+        </SidebarMenuButton>
     );
 };

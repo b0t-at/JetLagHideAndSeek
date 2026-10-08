@@ -3,10 +3,8 @@ import * as React from "react";
 import { toast } from "react-toastify";
 
 import CustomInitDialog from "@/components/CustomInitDialog";
-import { LatitudeLongitude } from "@/components/LatLngPicker";
 import PresetsDialog from "@/components/PresetsDialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import {
     MENU_ITEM_CLASSNAME,
@@ -18,10 +16,7 @@ import {
     displayHidingZones,
     drawingQuestionKey,
     hiderMode,
-    isLoading,
     questionModified,
-    questions,
-    triggerLocalRefresh,
 } from "@/lib/context";
 import { cn } from "@/lib/utils";
 import {
@@ -36,37 +31,33 @@ import {
     NO_GROUP,
 } from "@/maps/schema";
 
-import { QuestionCard } from "./base";
+import {
+    CardLatLng,
+    QuestionCard,
+    type QuestionCardProps,
+    questionCardPropsEqual,
+    ResultLabel,
+    useQuestionIndex,
+} from "./base";
 
-export const MatchingQuestionComponent = ({
+const MatchingQuestionCard = ({
     data,
     questionKey,
     sub,
     className,
-}: {
-    data: MatchingQuestion;
-    questionKey: number;
-    sub?: string;
-    className?: string;
-}) => {
-    useStore(triggerLocalRefresh);
+    index,
+}: QuestionCardProps<MatchingQuestion>) => {
     const $hiderMode = useStore(hiderMode);
-    const $questions = useStore(questions);
     const $displayHidingZones = useStore(displayHidingZones);
     const $drawingQuestionKey = useStore(drawingQuestionKey);
-    const $isLoading = useStore(isLoading);
     const $customInitPref = useStore(customInitPreference);
     const [customDialogOpen, setCustomDialogOpen] = React.useState(false);
     const [pendingCustomType, setPendingCustomType] = React.useState<
         "custom-zone" | "custom-points" | null
     >(null);
+    const questionIndex = useQuestionIndex("matching", questionKey, index);
     const label = `Matching
-    ${
-        $questions
-            .filter((q) => q.id === "matching")
-            .map((q) => q.key)
-            .indexOf(questionKey) + 1
-    }`;
+    ${questionIndex}`;
 
     let questionSpecific = <></>;
 
@@ -104,7 +95,7 @@ export const MatchingQuestionComponent = ({
                                         | 10),
                                 )
                             }
-                            disabled={!data.drag || $isLoading}
+                            disabled={!data.drag}
                         />
                     </SidebarMenuItem>
                     {data.type === "letter-zone" && (
@@ -166,7 +157,6 @@ export const MatchingQuestionComponent = ({
                                         drawingQuestionKey.set(-1);
                                     }
                                 }}
-                                disabled={$isLoading}
                             />
                             and use the buttons at the bottom left of the map.
                         </p>
@@ -371,13 +361,13 @@ export const MatchingQuestionComponent = ({
                         }
                         questionModified((data.type = value));
                     }}
-                    disabled={!data.drag || $isLoading}
+                    disabled={!data.drag}
                 />
             </SidebarMenuItem>
             {questionSpecific}
 
             {data.type !== "custom-zone" && (
-                <LatitudeLongitude
+                <CardLatLng
                     latitude={data.lat}
                     longitude={data.lng}
                     colorName={data.color}
@@ -390,7 +380,7 @@ export const MatchingQuestionComponent = ({
                         }
                         questionModified();
                     }}
-                    disabled={!data.drag || $isLoading}
+                    disabled={!data.drag}
                 />
             )}
             <div
@@ -399,15 +389,13 @@ export const MatchingQuestionComponent = ({
                     data.type === "same-length-station" && "flex-col",
                 )}
             >
-                <Label
+                <ResultLabel
                     className={cn(
-                        "font-semibold text-lg",
-                        $isLoading && "text-muted-foreground",
                         data.type === "same-length-station" && "text-center",
                     )}
                 >
                     Result
-                </Label>
+                </ResultLabel>
                 {data.type === "same-length-station" ? (
                     <ToggleGroup
                         className="grow"
@@ -437,7 +425,7 @@ export const MatchingQuestionComponent = ({
                                 questionModified((data.same = false));
                             }
                         }}
-                        disabled={!!$hiderMode || !data.drag || $isLoading}
+                        disabled={!!$hiderMode || !data.drag}
                     >
                         <ToggleGroupItem value="shorter">
                             Shorter
@@ -457,7 +445,7 @@ export const MatchingQuestionComponent = ({
                                 questionModified((data.same = false));
                             }
                         }}
-                        disabled={!!$hiderMode || !data.drag || $isLoading}
+                        disabled={!!$hiderMode || !data.drag}
                     >
                         <ToggleGroupItem value="different">
                             Different
@@ -469,3 +457,8 @@ export const MatchingQuestionComponent = ({
         </QuestionCard>
     );
 };
+
+export const MatchingQuestionComponent = React.memo(
+    MatchingQuestionCard,
+    questionCardPropsEqual,
+);

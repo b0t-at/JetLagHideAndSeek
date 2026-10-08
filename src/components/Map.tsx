@@ -30,7 +30,13 @@ import {
     triggerLocalRefresh,
 } from "@/lib/context";
 import { cn } from "@/lib/utils";
-import { applyQuestionsToMapGeoData, holedMask } from "@/maps";
+import {
+    applyQuestionsToMapGeoData,
+    createQuestionFoldCache,
+    holedMask,
+    omitQuestionFields,
+    UI_ONLY_QUESTION_FIELDS,
+} from "@/maps";
 import { hiderifyQuestion } from "@/maps";
 import { clearCache, determineMapBoundaries } from "@/maps/api";
 
@@ -38,6 +44,16 @@ import { DraggableMarkers } from "./DraggableMarkers";
 import { LeafletFullScreenButton } from "./LeafletFullScreenButton";
 import { MapPrint } from "./MapPrint";
 import { PolygonDraw } from "./PolygonDraw";
+
+/** Question fields hiderifying fills in */
+const HIDER_ANSWER_FIELDS = [
+    "within",
+    "warmer",
+    "location",
+    "same",
+    "hiderCloser",
+    "lengthComparison",
+];
 
 const getTileLayer = (tileLayer: string, thunderforestApiKey: string) => {
     switch (tileLayer) {
@@ -136,28 +152,60 @@ export const Map = ({ className }: { className?: string }) => {
     );
 
     /**
-     * A refresh requested while something else is loading is dropped, unless the
-     * play area or the list of questions changed since the last refresh started:
-     * then it's queued, so the map doesn't keep showing an outdated state
+     * A refresh requested while something else is loading is dropped, unless
+     * what the map shows changed since the last refresh started: then it's
+     * queued, so the map doesn't keep showing an outdated state
      */
     const refreshState = useMemo(
         () => ({
             running: false,
             areaVersion: 0,
             runAreaVersion: 0,
-            runQuestionKeys: "",
+            runSignature: "",
+            /** Signature of what the map currently shows, null if unknown */
+            drawnSignature: null as string | null,
             queued: null as { focus: boolean } | null,
         }),
         [],
     );
+    const foldCache = useMemo(() => createQuestionFoldCache(), []);
     const playAreaChanged = () =>
         refreshState.areaVersion !== refreshState.runAreaVersion;
+    /**
+     * Everything the drawn map depends on. Card colors and collapsing don't
+     * matter, and the lock only does in planning mode (unlocked questions are
+     * only outlined) and hider mode (only unlocked questions are answered).
+     * Without hider answers, it tells edits apart from hiderifying
+     */
+    const refreshSignature = (
+        drawnQuestions = questions.get(),
+        hider = hiderMode.get(),
+        withHiderAnswers = true,
+    ) => {
+        const $planningModeEnabled = planningModeEnabled.get();
+        const ignoredFields: string[] = [...UI_ONLY_QUESTION_FIELDS];
+        if (!$planningModeEnabled && hider === false) {
+            ignoredFields.push("drag");
+        }
+
+        return JSON.stringify([
+            refreshState.areaVersion,
+            $planningModeEnabled,
+            hider,
+            drawnQuestions.map((q) => [
+                q.id,
+                q.key,
+                omitQuestionFields(
+                    q.data,
+                    !withHiderAnswers && hider !== false && q.data.drag
+                        ? [...ignoredFields, ...HIDER_ANSWER_FIELDS]
+                        : ignoredFields,
+                ),
+            ]),
+        ]);
+    };
     const refreshOutdated = () =>
-        playAreaChanged() ||
-        questions
-            .get()
-            .map((q) => q.key)
-            .join() !== refreshState.runQuestionKeys;
+        playAreaChanged() || refreshSignature() !== refreshState.runSignature;
 
     const runQueuedRefresh = () => {
         if (refreshState.running || isLoading.get() || !refreshState.queued) {
@@ -183,7 +231,8 @@ export const Map = ({ className }: { className?: string }) => {
 
         refreshState.running = true;
         refreshState.runAreaVersion = refreshState.areaVersion;
-        refreshState.runQuestionKeys = $questions.map((q) => q.key).join();
+        refreshState.runSignature = refreshSignature($questions, $hiderMode);
+        refreshState.drawnSignature = null;
         try {
             await drawQuestions(map, focus);
         } catch (error) {
@@ -233,11 +282,29 @@ export const Map = ({ className }: { className?: string }) => {
         }
 
         if ($hiderMode !== false) {
+            const editSignature = refreshSignature(
+                $questions,
+                $hiderMode,
+                false,
+            );
+
             for (const question of $questions) {
                 await hiderifyQuestion(question);
             }
 
             triggerLocalRefresh.set(Math.random()); // Refresh the question sidebar with new information but not this map
+
+            // The answers hiderifying wrote are part of this run, unless
+            // something else was edited meanwhile
+            if (
+                editSignature ===
+                refreshSignature($questions, $hiderMode, false)
+            ) {
+                refreshState.runSignature = refreshSignature(
+                    $questions,
+                    $hiderMode,
+                );
+            }
         }
 
         map.eachLayer((layer: any) => {
@@ -257,6 +324,7 @@ export const Map = ({ className }: { className?: string }) => {
                     geoJSONPlane.questionKey = question.key;
                     geoJSONPlane.addTo(map);
                 },
+                foldCache,
             );
 
             // Don't draw an outdated state if it changed while the questions were applied
@@ -265,9 +333,10 @@ export const Map = ({ className }: { className?: string }) => {
                 return;
             }
 
+            const remainingArea = mapGeoData;
             mapGeoData = {
                 type: "FeatureCollection",
-                features: [holedMask(mapGeoData!)!],
+                features: [holedMask(remainingArea!)!],
             };
 
             map.eachLayer((layer: any) => {
@@ -283,9 +352,13 @@ export const Map = ({ className }: { className?: string }) => {
             g.addTo(map);
 
             questionFinishedMapData.set(mapGeoData);
+            // A failed step (e.g. offline) isn't drawn: let the next questions.set retry it
+            refreshState.drawnSignature = foldCache.lastRunFailed
+                ? null
+                : refreshState.runSignature;
 
             if (autoZoom.get() && focus) {
-                const bbox = turf.bbox(holedMask(mapGeoData) as any);
+                const bbox = turf.bbox(remainingArea!);
                 const bounds = [
                     [bbox[1], bbox[0]],
                     [bbox[3], bbox[2]],
@@ -497,6 +570,16 @@ export const Map = ({ className }: { className?: string }) => {
 
     useEffect(() => {
         if (!map) return;
+
+        // Nothing to redraw, e.g. only a card was locked, collapsed or recolored
+        if (
+            !refreshState.running &&
+            !refreshState.queued &&
+            mapGeoJSON.get() !== null &&
+            refreshState.drawnSignature === refreshSignature()
+        ) {
+            return;
+        }
 
         refreshQuestions(true);
     }, [$questions, map, $hiderMode]);

@@ -5,6 +5,8 @@ import type {
     LineString,
     MultiLineString,
     MultiPolygon,
+    Point,
+    Position,
 } from "geojson";
 import _ from "lodash";
 import osmtogeojson from "osmtogeojson";
@@ -28,13 +30,17 @@ import {
     QuestionSpecificLocation,
 } from "@/maps/api";
 import {
+    readGeometryCache,
+    writeGeometryCache,
+} from "@/maps/api/geometry-cache";
+import {
     arcBufferToPoint,
     arcDistance,
     connectToSeparateLines,
     groupObjects,
-    holedMask,
     modifyMapData,
 } from "@/maps/geo-utils";
+import { hiderInRegion } from "@/maps/questions/hider";
 import {
     type APILocations,
     DEFAULT_ADMIN_LEVEL,
@@ -119,6 +125,114 @@ const bboxExtension = (
     ];
 };
 
+interface CoastlineChunk {
+    ring: Position[];
+    /** Segments start..end-1, i.e. vertices start..end */
+    start: number;
+    end: number;
+    /** No point on these segments is farther than this from the start vertex (degrees) */
+    radius: number;
+}
+
+const COASTLINE_CHUNK_SEGMENTS = 32;
+
+/** The coastline as land polygons, cut into chunks for the nearest-coast search; once per session */
+const loadCoastline = _.memoize(async () => {
+    try {
+        const coastline = turf.lineToPolygon(
+            await fetchCoastline(),
+        ) as Feature<MultiPolygon>;
+
+        const chunks: CoastlineChunk[] = [];
+        let singleRings = true;
+        for (const polygon of coastline.geometry.coordinates) {
+            if (polygon.length !== 1) singleRings = false;
+            const ring = polygon[0];
+            for (
+                let start = 0;
+                start < ring.length - 1;
+                start += COASTLINE_CHUNK_SEGMENTS
+            ) {
+                const end = Math.min(
+                    start + COASTLINE_CHUNK_SEGMENTS,
+                    ring.length - 1,
+                );
+                let radius = 0;
+                for (let i = start; i < end; i++) {
+                    radius = Math.max(
+                        radius,
+                        turf.distance(ring[start], ring[i], {
+                            units: "degrees",
+                        }) +
+                            turf.distance(ring[i], ring[i + 1], {
+                                units: "degrees",
+                            }),
+                    );
+                }
+                // Odd coordinates: never skip this chunk
+                if (Number.isNaN(radius)) radius = Infinity;
+                chunks.push({ ring, start, end, radius });
+            }
+        }
+
+        return { coastline, chunks: singleRings ? chunks : null };
+    } catch (error) {
+        loadCoastline.cache.clear!();
+        throw error;
+    }
+});
+
+// Margin for rounding in the bound below, in degrees (about 10 cm)
+const COASTLINE_BOUND_EPSILON = 1e-6;
+
+/**
+ * Same result as turf.pointToPolygonDistance(point, coastline, { units: "miles", method: "geodesic" }),
+ * which measures all ~60k coastline segments. Here a chunk is skipped when its segments can't beat
+ * the nearest one found so far: every point on them is at least distance(point, chunk start) - radius
+ * away (triangle inequality on the sphere). The segments that are measured use turf's own code.
+ */
+const distanceToNearestCoast = (
+    point: Feature<Point>,
+    coastline: Feature<MultiPolygon>,
+    chunks: CoastlineChunk[] | null,
+) => {
+    if (!chunks) {
+        return turf.pointToPolygonDistance(point, coastline, {
+            units: "miles",
+            method: "geodesic",
+        });
+    }
+
+    const p = point.geometry.coordinates;
+    const bounds = chunks.map((chunk) => {
+        const bound =
+            turf.distance(p, chunk.ring[chunk.start], { units: "degrees" }) -
+            chunk.radius;
+        return Number.isNaN(bound) ? -Infinity : bound;
+    });
+    const order = chunks
+        .map((_chunk, i) => i)
+        .sort((a, b) => bounds[a] - bounds[b]);
+
+    let nearest = Infinity;
+    for (const i of order) {
+        if (bounds[i] > nearest + COASTLINE_BOUND_EPSILON) break;
+        const { ring, start, end } = chunks[i];
+        for (let k = start; k < end; k++) {
+            // turf's geodesic point-to-segment distance (point-to-line-distance)
+            const distance = turf.nearestPointOnLine(
+                turf.lineString([ring[k], ring[k + 1]]).geometry,
+                p,
+                { units: "degrees" },
+            ).properties.dist;
+            if (distance < nearest) nearest = distance;
+        }
+    }
+
+    const miles = turf.convertLength(nearest, "degrees", "miles");
+    return miles * (turf.booleanPointInPolygon(point, coastline) ? -1 : 1);
+};
+
 export const determineMeasuringBoundary = async (
     question: MeasuringQuestion,
 ) => {
@@ -186,17 +300,12 @@ export const determineMeasuringBoundary = async (
                 .filter((line) => line.geometry.coordinates.length > 0);
         }
         case "coastline": {
-            const coastline = turf.lineToPolygon(
-                await fetchCoastline(),
-            ) as Feature<MultiPolygon>;
+            const { coastline, chunks } = await loadCoastline();
 
-            const distanceToCoastline = turf.pointToPolygonDistance(
+            const distanceToCoastline = distanceToNearestCoast(
                 turf.point([question.lng, question.lat]),
                 coastline,
-                {
-                    units: "miles",
-                    method: "geodesic",
-                },
+                chunks,
             );
 
             return [
@@ -350,19 +459,86 @@ const bufferedDeterminerKey = (question: MeasuringQuestion) =>
         cat: _.omit((question as any).cat, "zoneName"),
     });
 
+const bufferToQuestion = async (
+    question: MeasuringQuestion,
+    placeData: Awaited<ReturnType<typeof determineMeasuringBoundary>>,
+) => {
+    if (placeData === false || placeData === undefined) return false;
+
+    return await arcBufferToPoint(
+        turf.featureCollection(placeData as any),
+        question.lat,
+        question.lng,
+    );
+};
+
+const determineBuffered = async (question: MeasuringQuestion) =>
+    bufferToQuestion(question, await determineMeasuringBoundary(question));
+
+// Expensive and computed from static data only (coastline file, bundled or cached boundaries)
+const PERSISTED_MEASURING_TYPES = new Set(["coastline", "admin-measure"]);
+
+/** Also covers the play area's extent, which determineMeasuringBoundary clips to */
+const persistedDeterminerKey = (question: MeasuringQuestion) => {
+    const $mapGeoJSON = mapGeoJSON.get();
+    return $mapGeoJSON
+        ? JSON.stringify([
+              bufferedDeterminerKey(question),
+              turf.bbox($mapGeoJSON),
+          ])
+        : null;
+};
+
+/** Like determineBuffered, but keeps the result across reloads */
+const determineBufferedPersisted = async (question: MeasuringQuestion) => {
+    const storedKey = persistedDeterminerKey(question);
+    if (storedKey === null) return await determineBuffered(question);
+
+    const stored =
+        await readGeometryCache<Awaited<ReturnType<typeof determineBuffered>>>(
+            storedKey,
+        );
+    if (stored) {
+        // The admin zone's label, which a determination would have set
+        if (typeof stored.extra?.zoneName === "string") {
+            if (!(question as any).cat) {
+                (question as any).cat = { adminLevel: DEFAULT_ADMIN_LEVEL };
+            }
+            (question as any).cat.zoneName = stored.extra.zoneName;
+        }
+        return stored.value;
+    }
+
+    // Read right before determineMeasuringBoundary reads the play area
+    const key = persistedDeterminerKey(question);
+    const placeData = await determineMeasuringBoundary(question);
+    const result = await bufferToQuestion(question, placeData);
+
+    // Not when nothing was found (e.g. no admin boundary), so that toast shows again
+    const found =
+        placeData !== false &&
+        placeData !== undefined &&
+        placeData.every((feature) => turf.coordAll(feature).length > 0);
+    if (key !== null && result !== false && found) {
+        void writeGeometryCache(
+            key,
+            result,
+            question.type === "admin-measure"
+                ? { zoneName: (question as any).cat?.zoneName }
+                : undefined,
+        );
+    }
+
+    return result;
+};
+
 const bufferedDeterminer = _.memoize(async (question: MeasuringQuestion) => {
     const key = bufferedDeterminerKey(question);
 
     try {
-        const placeData = await determineMeasuringBoundary(question);
-
-        if (placeData === false || placeData === undefined) return false;
-
-        return await arcBufferToPoint(
-            turf.featureCollection(placeData as any),
-            question.lat,
-            question.lng,
-        );
+        return PERSISTED_MEASURING_TYPES.has(question.type)
+            ? await determineBufferedPersisted(question)
+            : await determineBuffered(question);
     } catch (error) {
         // Don't keep a failure (e.g. the play area changed mid-refresh) cached
         bufferedDeterminer.cache.delete(key);
@@ -475,31 +651,20 @@ export const hiderifyMeasuring = async (question: MeasuringQuestion) => {
         return question;
     }
 
-    const $mapGeoJSON = mapGeoJSON.get();
-    if ($mapGeoJSON === null) return question;
+    if (mapGeoJSON.get() === null) return question;
 
-    let feature = null;
-
+    // A point test against the (memoized) buffer answers this, no need to
+    // clip the play area
+    let buffer;
     try {
-        feature = holedMask((await adjustPerMeasuring(question, $mapGeoJSON))!);
+        buffer = await bufferedDeterminer(question);
     } catch {
-        try {
-            feature = await adjustPerMeasuring(question, {
-                type: "FeatureCollection",
-                features: [holedMask($mapGeoJSON)],
-            });
-        } catch {
-            return question;
-        }
+        return question;
     }
+    if (!buffer) return question;
 
-    if (feature === null || feature === undefined) return question;
-
-    const hiderPoint = turf.point([$hiderMode.longitude, $hiderMode.latitude]);
-
-    if (turf.booleanPointInPolygon(hiderPoint, feature)) {
-        question.hiderCloser = !question.hiderCloser;
-    }
+    const hiderCloser = hiderInRegion($hiderMode, buffer);
+    if (hiderCloser !== undefined) question.hiderCloser = hiderCloser;
 
     return question;
 };

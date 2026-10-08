@@ -1,21 +1,29 @@
 import { useStore } from "@nanostores/react";
 import * as turf from "@turf/turf";
-import { Suspense, use, useEffect, useState } from "react";
+import { atom } from "nanostores";
+import {
+    memo,
+    Suspense,
+    use,
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
 
-import { LatitudeLongitude } from "@/components/LatLngPicker";
 import PresetsDialog from "@/components/PresetsDialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import {
     MENU_ITEM_CLASSNAME,
+    SidebarContext,
     SidebarMenuItem,
 } from "@/components/ui/sidebar-l";
 import { UnitSelect } from "@/components/UnitSelect";
 import {
     drawingQuestionKey,
     hiderMode,
-    isLoading,
     questionModified,
     questions,
     triggerLocalRefresh,
@@ -26,34 +34,100 @@ import { arcDistance } from "@/maps/geo-utils";
 import {
     determineUnionizedStrings,
     NO_GROUP,
+    type Questions,
     type TentacleQuestion,
     tentacleQuestionSchema,
     type TraditionalTentacleQuestion,
 } from "@/maps/schema";
 
-import { QuestionCard } from "./base";
+import {
+    CardLatLng,
+    QuestionCard,
+    type QuestionCardProps,
+    questionCardPropsEqual,
+    useQuestionIndex,
+} from "./base";
 
-export const TentacleQuestionComponent = ({
+/**
+ * findTentacleLocations promises by query, so a re-render or a remount reuses
+ * the resolved promise (React's use() then reads it without suspending)
+ * instead of querying the bundled data again.
+ *
+ * A lookup that came back empty is not shared: findTentacleLocations resolves
+ * to no features when the data file and Overpass are both unreachable. Such a
+ * result is only reused for the token it was made with, so Suspense's retry
+ * render does not start another lookup, and a card asks again by passing a new
+ * token (a new card, or TentacleLocationSelector's onRetry after an edit).
+ */
+type TentacleLocationLookup = {
+    promise: Promise<any>;
+    token: object;
+    empty: boolean;
+};
+const tentacleLocationCache = new Map<string, TentacleLocationLookup>();
+const TENTACLE_LOCATION_CACHE_SIZE = 32;
+const cachedTentacleLocations = (
+    data: TraditionalTentacleQuestion,
+    token: object,
+) => {
+    const key = JSON.stringify([
+        data.locationType,
+        data.lat,
+        data.lng,
+        data.radius,
+        data.unit,
+    ]);
+    const cached = tentacleLocationCache.get(key);
+    if (cached && (!cached.empty || cached.token === token)) {
+        // Re-inserted, so the least recently used lookup is evicted first
+        tentacleLocationCache.delete(key);
+        tentacleLocationCache.set(key, cached);
+        return cached.promise;
+    }
+    const lookup: TentacleLocationLookup = {
+        promise: findTentacleLocations(data),
+        token,
+        empty: false,
+    };
+    lookup.promise.then(
+        (result) => {
+            if (!result?.features?.length) lookup.empty = true;
+        },
+        () => {
+            // Failed lookups are retried on the next render, as before
+            if (tentacleLocationCache.get(key) === lookup) {
+                tentacleLocationCache.delete(key);
+            }
+        },
+    );
+    tentacleLocationCache.set(key, lookup);
+    if (tentacleLocationCache.size > TENTACLE_LOCATION_CACHE_SIZE) {
+        tentacleLocationCache.delete(
+            tentacleLocationCache.keys().next().value!,
+        );
+    }
+    return lookup.promise;
+};
+
+const NO_QUESTIONS = atom<Questions>([]);
+const NO_SIDEBAR = atom({ openMobile: false });
+
+const TentacleQuestionCard = ({
     data,
     questionKey,
     sub,
     className,
-}: {
-    data: TentacleQuestion;
-    questionKey: number;
-    sub?: string;
-    className?: string;
-}) => {
-    const $questions = useStore(questions);
+    index,
+}: QuestionCardProps<TentacleQuestion>) => {
     const $drawingQuestionKey = useStore(drawingQuestionKey);
-    const $isLoading = useStore(isLoading);
+    // A new token makes cachedTentacleLocations look up an empty result again
+    const [lookupToken, setLookupToken] = useState<object>(() => ({}));
+    const retryLookup = useCallback(() => setLookupToken({}), []);
+    const questionIndex = useQuestionIndex("tentacles", questionKey, index, {
+        refresh: false,
+    });
     const label = `Tentacles
-    ${
-        $questions
-            .filter((q) => q.id === "tentacles")
-            .map((q) => q.key)
-            .indexOf(questionKey) + 1
-    }`;
+    ${questionIndex}`;
 
     return (
         <QuestionCard
@@ -81,14 +155,14 @@ export const TentacleQuestionComponent = ({
                                 (data.radius = parseFloat(e.target.value)),
                             )
                         }
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                     />
                     <UnitSelect
                         unit={data.unit}
                         onChange={(unit) =>
                             questionModified((data.unit = unit))
                         }
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                     />
                 </div>
             </SidebarMenuItem>
@@ -142,7 +216,7 @@ export const TentacleQuestionComponent = ({
                         }
                         questionModified();
                     }}
-                    disabled={!data.drag || $isLoading}
+                    disabled={!data.drag}
                 />
             </SidebarMenuItem>
             {data.locationType === "custom" && data.drag && (
@@ -159,7 +233,7 @@ export const TentacleQuestionComponent = ({
                                     drawingQuestionKey.set(-1);
                                 }
                             }}
-                            disabled={!data.drag || $isLoading}
+                            disabled={!data.drag}
                         />
                         and use the buttons at the bottom left of the map.
                     </p>
@@ -171,7 +245,7 @@ export const TentacleQuestionComponent = ({
                     </div>
                 </>
             )}
-            <LatitudeLongitude
+            <CardLatLng
                 latitude={data.lat}
                 longitude={data.lng}
                 colorName={data.color}
@@ -184,7 +258,7 @@ export const TentacleQuestionComponent = ({
                     }
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
             <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
                 <Suspense
@@ -208,15 +282,30 @@ export const TentacleQuestionComponent = ({
                     }
                 >
                     <TentacleLocationSelector
+                        // A new lookup (e.g. a pasted or synced game) starts
+                        // without a filtered list, so the answer isn't checked
+                        // against the previous lookup's places
+                        key={JSON.stringify([
+                            data.locationType,
+                            data.lat,
+                            data.lng,
+                            data.radius,
+                            data.unit,
+                        ])}
                         data={data}
                         promise={
                             data.locationType === "custom"
                                 ? Promise.resolve(
                                       turf.featureCollection(data.places),
                                   )
-                                : findTentacleLocations(data)
+                                : cachedTentacleLocations(data, lookupToken)
                         }
-                        disabled={!data.drag || $isLoading}
+                        onRetry={
+                            data.locationType === "custom"
+                                ? undefined
+                                : retryLookup
+                        }
+                        disabled={!data.drag}
                     />
                 </Suspense>
             </SidebarMenuItem>
@@ -224,18 +313,57 @@ export const TentacleQuestionComponent = ({
     );
 };
 
+export const TentacleQuestionComponent = memo(
+    TentacleQuestionCard,
+    questionCardPropsEqual,
+);
+
 const TentacleLocationSelector = ({
     data,
     promise,
+    onRetry,
     disabled,
 }: {
     data: TentacleQuestion;
     promise: Promise<any>;
+    onRetry?: () => void;
     disabled: boolean;
 }) => {
-    useStore(triggerLocalRefresh);
+    const $refresh = useStore(triggerLocalRefresh);
     const $hiderMode = useStore(hiderMode);
     const locations = use(promise);
+
+    // An empty lookup (e.g. made offline) is asked again after the next edit or
+    // when the phone panel is opened again, as the card used to re-render and
+    // look up its locations on every change
+    const lookupFailed = !!onRetry && !locations?.features?.length;
+    const $questions = useStore(lookupFailed ? questions : NO_QUESTIONS);
+    const { openMobile } = useStore(lookupFailed ? SidebarContext : NO_SIDEBAR);
+    const lastSeen = useRef({
+        failed: lookupFailed,
+        questions: $questions,
+        refresh: $refresh,
+        openMobile,
+    });
+    useEffect(() => {
+        const last = lastSeen.current;
+        lastSeen.current = {
+            failed: lookupFailed,
+            questions: $questions,
+            refresh: $refresh,
+            openMobile,
+        };
+        if (
+            lookupFailed &&
+            last.failed &&
+            (last.questions !== $questions ||
+                last.refresh !== $refresh ||
+                (openMobile && !last.openMobile))
+        ) {
+            onRetry?.();
+        }
+    }, [lookupFailed, $questions, $refresh, openMobile, onRetry]);
+
     // null until filtered, so a saved answer isn't cleared on the first render
     const [filteredFeatures, setFilteredFeatures] = useState<any[] | null>(
         null,

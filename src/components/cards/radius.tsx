@@ -1,48 +1,37 @@
 import { useStore } from "@nanostores/react";
+import { memo } from "react";
 
-import { LatitudeLongitude } from "@/components/LatLngPicker";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
     MENU_ITEM_CLASSNAME,
     SidebarMenuItem,
 } from "@/components/ui/sidebar-l";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { UnitSelect } from "@/components/UnitSelect";
-import {
-    hiderMode,
-    isLoading,
-    questionModified,
-    questions,
-    triggerLocalRefresh,
-} from "@/lib/context";
+import { hiderMode, questionModified } from "@/lib/context";
 import { cn } from "@/lib/utils";
 import type { RadiusQuestion } from "@/maps/schema";
 
-import { QuestionCard } from "./base";
+import {
+    CardLatLng,
+    QuestionCard,
+    type QuestionCardProps,
+    questionCardPropsEqual,
+    ResultLabel,
+    useQuestionIndex,
+} from "./base";
 
-export const RadiusQuestionComponent = ({
+const RadiusQuestionCard = ({
     data,
     questionKey,
     sub,
     className,
-}: {
-    data: RadiusQuestion;
-    questionKey: number;
-    sub?: string;
-    className?: string;
-}) => {
-    useStore(triggerLocalRefresh);
+    index,
+}: QuestionCardProps<RadiusQuestion>) => {
     const $hiderMode = useStore(hiderMode);
-    const $questions = useStore(questions);
-    const $isLoading = useStore(isLoading);
+    const questionIndex = useQuestionIndex("radius", questionKey, index);
     const label = `Radius
-    ${
-        $questions
-            .filter((q) => q.id === "radius")
-            .map((q) => q.key)
-            .indexOf(questionKey) + 1
-    }`;
+    ${questionIndex}`;
 
     return (
         <QuestionCard
@@ -65,7 +54,7 @@ export const RadiusQuestionComponent = ({
                         type="number"
                         className="rounded-md p-2 w-16"
                         value={data.radius}
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                         onChange={(e) =>
                             questionModified(
                                 (data.radius = parseFloat(e.target.value)),
@@ -74,14 +63,14 @@ export const RadiusQuestionComponent = ({
                     />
                     <UnitSelect
                         unit={data.unit}
-                        disabled={!data.drag || $isLoading}
+                        disabled={!data.drag}
                         onChange={(unit) =>
                             questionModified((data.unit = unit))
                         }
                     />
                 </div>
             </SidebarMenuItem>
-            <LatitudeLongitude
+            <CardLatLng
                 latitude={data.lat}
                 longitude={data.lng}
                 colorName={data.color}
@@ -94,17 +83,10 @@ export const RadiusQuestionComponent = ({
                     }
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
             <div className="flex gap-2 items-center p-2">
-                <Label
-                    className={cn(
-                        "font-semibold text-lg",
-                        $isLoading && "text-muted-foreground",
-                    )}
-                >
-                    Result
-                </Label>
+                <ResultLabel>Result</ResultLabel>
                 <ToggleGroup
                     className="grow"
                     type="single"
@@ -112,7 +94,7 @@ export const RadiusQuestionComponent = ({
                     onValueChange={(value: "inside" | "outside") =>
                         questionModified((data.within = value === "inside"))
                     }
-                    disabled={!!$hiderMode || !data.drag || $isLoading}
+                    disabled={!!$hiderMode || !data.drag}
                 >
                     <ToggleGroupItem value="outside">Outside</ToggleGroupItem>
                     <ToggleGroupItem value="inside">Inside</ToggleGroupItem>
@@ -121,3 +103,8 @@ export const RadiusQuestionComponent = ({
         </QuestionCard>
     );
 };
+
+export const RadiusQuestionComponent = memo(
+    RadiusQuestionCard,
+    questionCardPropsEqual,
+);

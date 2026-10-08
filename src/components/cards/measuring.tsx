@@ -4,7 +4,6 @@ import * as React from "react";
 import { Suspense, use } from "react";
 
 import CustomInitDialog from "@/components/CustomInitDialog";
-import { LatitudeLongitude } from "@/components/LatLngPicker";
 import PresetsDialog from "@/components/PresetsDialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select } from "@/components/ui/select";
@@ -18,12 +17,9 @@ import {
     displayHidingZones,
     drawingQuestionKey,
     hiderMode,
-    isLoading,
     questionModified,
-    questions,
     triggerLocalRefresh,
 } from "@/lib/context";
-import { cn } from "@/lib/utils";
 import {
     determineMeasuringBoundary,
     findAdminZoneInfo,
@@ -36,34 +32,30 @@ import {
     NO_GROUP,
 } from "@/maps/schema";
 
-import { QuestionCard } from "./base";
+import {
+    CardLatLng,
+    QuestionCard,
+    type QuestionCardProps,
+    questionCardPropsEqual,
+    ResultLabel,
+    useQuestionIndex,
+} from "./base";
 
-export const MeasuringQuestionComponent = ({
+const MeasuringQuestionCard = ({
     data,
     questionKey,
     sub,
     className,
-}: {
-    data: MeasuringQuestion;
-    questionKey: number;
-    sub?: string;
-    className?: string;
-}) => {
-    useStore(triggerLocalRefresh);
+    index,
+}: QuestionCardProps<MeasuringQuestion>) => {
     const $hiderMode = useStore(hiderMode);
-    const $questions = useStore(questions);
     const $displayHidingZones = useStore(displayHidingZones);
     const $drawingQuestionKey = useStore(drawingQuestionKey);
-    const $isLoading = useStore(isLoading);
     const $customInitPref = useStore(customInitPreference);
     const [customDialogOpen, setCustomDialogOpen] = React.useState(false);
+    const questionIndex = useQuestionIndex("measuring", questionKey, index);
     const label = `Measuring
-    ${
-        $questions
-            .filter((q) => q.id === "measuring")
-            .map((q) => q.key)
-            .indexOf(questionKey) + 1
-    }`;
+    ${questionIndex}`;
 
     let questionSpecific = <></>;
 
@@ -101,7 +93,7 @@ export const MeasuringQuestionComponent = ({
                                 (data as any).cat.zoneName = undefined;
                                 questionModified();
                             }}
-                            disabled={!data.drag || $isLoading}
+                            disabled={!data.drag}
                         />
                     </SidebarMenuItem>
                     <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
@@ -176,7 +168,7 @@ export const MeasuringQuestionComponent = ({
                                         drawingQuestionKey.set(-1);
                                     }
                                 }}
-                                disabled={!data.drag || $isLoading}
+                                disabled={!data.drag}
                             />
                             and use the buttons at the bottom left of the map.
                         </p>
@@ -328,11 +320,11 @@ export const MeasuringQuestionComponent = ({
                         data.type = value;
                         questionModified();
                     }}
-                    disabled={!data.drag || $isLoading}
+                    disabled={!data.drag}
                 />
             </SidebarMenuItem>
             {questionSpecific}
-            <LatitudeLongitude
+            <CardLatLng
                 latitude={data.lat}
                 longitude={data.lng}
                 colorName={data.color}
@@ -345,17 +337,10 @@ export const MeasuringQuestionComponent = ({
                     }
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
             <div className="flex gap-2 items-center p-2">
-                <Label
-                    className={cn(
-                        "font-semibold text-lg",
-                        $isLoading && "text-muted-foreground",
-                    )}
-                >
-                    Result
-                </Label>
+                <ResultLabel unstyled>Result</ResultLabel>
                 <ToggleGroup
                     className="grow"
                     type="single"
@@ -365,7 +350,7 @@ export const MeasuringQuestionComponent = ({
                             (data.hiderCloser = value === "closer"),
                         )
                     }
-                    disabled={!!$hiderMode || !data.drag || $isLoading}
+                    disabled={!!$hiderMode || !data.drag}
                 >
                     <ToggleGroupItem value="further">
                         Hider Further
@@ -378,6 +363,11 @@ export const MeasuringQuestionComponent = ({
         </QuestionCard>
     );
 };
+
+export const MeasuringQuestionComponent = React.memo(
+    MeasuringQuestionCard,
+    questionCardPropsEqual,
+);
 
 const AdminZoneNameDisplay = ({ data }: { data: MeasuringQuestion }) => {
     useStore(triggerLocalRefresh);

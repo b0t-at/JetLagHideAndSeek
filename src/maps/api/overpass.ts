@@ -83,6 +83,14 @@ const fetchFromHosts = (urls: string[], cacheType: CacheType) =>
         tryNext();
     });
 
+let softFailures = 0;
+
+/**
+ * How many Overpass requests failed and resolved to no elements instead of
+ * throwing, so a caller can tell an empty answer from a failed one
+ */
+export const overpassSoftFailures = () => softFailures;
+
 export const getOverpassData = async (
     query: string,
     loadingText?: string,
@@ -112,6 +120,7 @@ export const getOverpassData = async (
         : pending);
 
     if (typeof result === "string") {
+        softFailures++;
         toast.error(`Could not load data from Overpass: ${result}`, {
             toastId: "overpass-error",
         });

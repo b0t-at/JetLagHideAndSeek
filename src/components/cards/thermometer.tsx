@@ -1,50 +1,37 @@
 import { useStore } from "@nanostores/react";
 import { point } from "@turf/turf";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
-import { LatitudeLongitude } from "@/components/LatLngPicker";
-import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { defaultUnit } from "@/lib/context";
-import {
-    hiderMode,
-    isLoading,
-    questionModified,
-    questions,
-    triggerLocalRefresh,
-} from "@/lib/context";
-import { cn } from "@/lib/utils";
+import { hiderMode, questionModified } from "@/lib/context";
 import { arcDistance } from "@/maps/geo-utils";
 import type { ThermometerQuestion } from "@/maps/schema";
 
-import { QuestionCard } from "./base";
+import {
+    CardLatLng,
+    QuestionCard,
+    type QuestionCardProps,
+    questionCardPropsEqual,
+    ResultLabel,
+    useQuestionIndex,
+} from "./base";
 
-export const ThermometerQuestionComponent = ({
+const ThermometerQuestionCard = ({
     data,
     questionKey,
     sub,
     className,
-}: {
-    data: ThermometerQuestion;
-    questionKey: number;
-    sub?: string;
-    className?: string;
-}) => {
-    useStore(triggerLocalRefresh);
+    index,
+}: QuestionCardProps<ThermometerQuestion>) => {
     const $hiderMode = useStore(hiderMode);
-    const $questions = useStore(questions);
-    const $isLoading = useStore(isLoading);
 
     const $defaultUnit = useStore(defaultUnit);
     const DISTANCE_UNIT = $defaultUnit ?? "miles";
 
+    const questionIndex = useQuestionIndex("thermometer", questionKey, index);
     const label = `Thermometer
-    ${
-        $questions
-            .filter((q) => q.id === "thermometer")
-            .map((q) => q.key)
-            .indexOf(questionKey) + 1
-    }`;
+    ${questionIndex}`;
 
     const hasCoords =
         data.latA !== null &&
@@ -95,7 +82,7 @@ export const ThermometerQuestionComponent = ({
             hidden={data.hidden}
             setHidden={(hidden) => questionModified((data.hidden = hidden))}
         >
-            <LatitudeLongitude
+            <CardLatLng
                 latitude={data.latA}
                 longitude={data.lngA}
                 label="Start"
@@ -105,10 +92,10 @@ export const ThermometerQuestionComponent = ({
                     if (lng !== null) data.lngA = lng;
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
 
-            <LatitudeLongitude
+            <CardLatLng
                 latitude={data.latB}
                 longitude={data.lngB}
                 label="End"
@@ -118,7 +105,7 @@ export const ThermometerQuestionComponent = ({
                     if (lng !== null) data.lngB = lng;
                     questionModified();
                 }}
-                disabled={!data.drag || $isLoading}
+                disabled={!data.drag}
             />
 
             {distanceValue !== null && (
@@ -131,14 +118,7 @@ export const ThermometerQuestionComponent = ({
             )}
 
             <div className="flex gap-2 items-center p-2">
-                <Label
-                    className={cn(
-                        "font-semibold text-lg",
-                        $isLoading && "text-muted-foreground",
-                    )}
-                >
-                    Result
-                </Label>
+                <ResultLabel>Result</ResultLabel>
                 <ToggleGroup
                     className="grow"
                     type="single"
@@ -146,7 +126,7 @@ export const ThermometerQuestionComponent = ({
                     onValueChange={(value: "warmer" | "colder") =>
                         questionModified((data.warmer = value === "warmer"))
                     }
-                    disabled={!!$hiderMode || !data.drag || $isLoading}
+                    disabled={!!$hiderMode || !data.drag}
                 >
                     <ToggleGroupItem color="red" value="colder">
                         Colder
@@ -157,3 +137,8 @@ export const ThermometerQuestionComponent = ({
         </QuestionCard>
     );
 };
+
+export const ThermometerQuestionComponent = memo(
+    ThermometerQuestionCard,
+    questionCardPropsEqual,
+);

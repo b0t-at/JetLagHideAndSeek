@@ -1,8 +1,11 @@
 import { useStore } from "@nanostores/react";
+import * as LabelPrimitive from "@radix-ui/react-label";
 import { EyeIcon, EyeOffIcon, LockIcon, UnlockIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { atom } from "nanostores";
+import { type ComponentProps, useRef, useState } from "react";
 import { VscChevronDown, VscShare, VscTrash } from "react-icons/vsc";
 
+import { LatitudeLongitude } from "@/components/LatLngPicker";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -23,6 +26,7 @@ import {
     DialogTitle,
     DialogTrigger,
 } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import {
     SidebarGroup,
@@ -30,8 +34,122 @@ import {
     SidebarGroupLabel,
     SidebarMenu,
 } from "@/components/ui/sidebar-l";
-import { isLoading, questions } from "@/lib/context";
+import { isLoading, questions, triggerLocalRefresh } from "@/lib/context";
 import { cn } from "@/lib/utils";
+import type { Question, Questions } from "@/maps/schema";
+
+/**
+ * Props shared by the question cards. QuestionSidebar also passes `index` (the
+ * card's number among questions of its type) and `snapshot` (the serialized
+ * question data), so a card only re-renders when its own question changes.
+ * Other callers (marker popups, the tutorial) leave them out and the card
+ * subscribes to the questions itself, as before.
+ */
+export type QuestionCardProps<T> = {
+    data: T;
+    questionKey: number;
+    sub?: string;
+    className?: string;
+    index?: number;
+    snapshot?: string;
+};
+
+/**
+ * React.memo comparator for the cards. The question data is mutated in place,
+ * so without a snapshot the card always re-renders, like an unmemoized one.
+ */
+export const questionCardPropsEqual = (
+    prev: QuestionCardProps<unknown>,
+    next: QuestionCardProps<unknown>,
+) =>
+    next.snapshot !== undefined &&
+    prev.snapshot === next.snapshot &&
+    prev.data === next.data &&
+    prev.questionKey === next.questionKey &&
+    prev.index === next.index &&
+    prev.sub === next.sub &&
+    prev.className === next.className;
+
+const NO_QUESTIONS = atom<Questions>([]);
+const NO_REFRESH = atom<number>(0);
+
+/** The number shown in a card's label ("Radius 2") */
+export const useQuestionIndex = (
+    id: Question["id"],
+    questionKey: number,
+    index: number | undefined,
+    { refresh = true }: { refresh?: boolean } = {},
+) => {
+    const standalone = index === undefined;
+    const $questions = useStore(standalone ? questions : NO_QUESTIONS);
+    useStore(standalone && refresh ? triggerLocalRefresh : NO_REFRESH);
+    if (!standalone) return index;
+    return (
+        $questions
+            .filter((q) => q.id === id)
+            .map((q) => q.key)
+            .indexOf(questionKey) + 1
+    );
+};
+
+/**
+ * Disables every native control inside while the map is refreshing. Only this
+ * element re-renders when isLoading flips, not the whole card.
+ */
+export const LoadingFieldset = ({
+    children,
+    className,
+}: {
+    children: React.ReactNode;
+    className?: string;
+}) => {
+    const $isLoading = useStore(isLoading);
+
+    return (
+        <fieldset disabled={$isLoading} className={cn("min-w-0", className)}>
+            {children}
+        </fieldset>
+    );
+};
+
+/** The "Result" label of a card, muted while the map is refreshing */
+export const ResultLabel = ({
+    children,
+    className,
+    unstyled = false,
+}: {
+    children: React.ReactNode;
+    className?: string;
+    /** Use the bare Radix label instead of the styled ui/label */
+    unstyled?: boolean;
+}) => {
+    const $isLoading = useStore(isLoading);
+    const LabelComponent = unstyled ? LabelPrimitive.Root : Label;
+
+    return (
+        <LabelComponent
+            className={cn(
+                "font-semibold text-lg",
+                $isLoading && "text-muted-foreground",
+                className,
+            )}
+        >
+            {children}
+        </LabelComponent>
+    );
+};
+
+/**
+ * LatitudeLongitude that is also disabled while the map is refreshing. Its edit
+ * dialog renders in a portal, outside the card's LoadingFieldset.
+ */
+export const CardLatLng = (props: ComponentProps<typeof LatitudeLongitude>) => {
+    const $isLoading = useStore(isLoading);
+
+    return (
+        <LatitudeLongitude {...props} disabled={props.disabled || $isLoading} />
+    );
+};
 
 export const QuestionCard = ({
     children,
@@ -59,9 +177,6 @@ export const QuestionCard = ({
     setCollapsed?: (collapsed: boolean) => void;
 }) => {
     const [isCollapsed, setIsCollapsed] = useState(collapsed ?? false);
-    const $questions = useStore(questions);
-    const $isLoading = useStore(isLoading);
-    const copyButtonRef = useRef<HTMLButtonElement>(null);
 
     const toggleCollapse = () => {
         if (setCollapsed) {
@@ -95,7 +210,9 @@ export const QuestionCard = ({
                             isCollapsed && "max-h-0",
                         )}
                     >
-                        <SidebarMenu>{children}</SidebarMenu>
+                        <LoadingFieldset>
+                            <SidebarMenu>{children}</SidebarMenu>
+                        </LoadingFieldset>
                         <div className="flex gap-2 pt-2 px-2 justify-center">
                             <Dialog>
                                 <DialogTrigger asChild>
@@ -117,153 +234,156 @@ export const QuestionCard = ({
                                             &ldquo;Questions&rdquo; sidebar.
                                         </DialogDescription>
                                     </DialogHeader>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="mb-2 sm:mb-0 transition-colors"
-                                        ref={copyButtonRef}
-                                        onClick={() => {
-                                            navigator.clipboard
-                                                .writeText(
-                                                    JSON.stringify(
-                                                        $questions.find(
-                                                            (q) =>
-                                                                q.key ===
-                                                                questionKey,
-                                                        ),
-                                                        null,
-                                                        4,
-                                                    ),
-                                                )
-                                                .then(() => {
-                                                    if (copyButtonRef.current) {
-                                                        copyButtonRef.current.textContent =
-                                                            "Copied!";
-                                                        copyButtonRef.current.classList.add(
-                                                            "bg-green-500",
-                                                        );
-                                                        setTimeout(() => {
-                                                            if (
-                                                                copyButtonRef.current
-                                                            ) {
-                                                                copyButtonRef.current.textContent =
-                                                                    "Copy to Clipboard";
-                                                                copyButtonRef.current.classList.remove(
-                                                                    "bg-green-500",
-                                                                );
-                                                            }
-                                                        }, 2000);
-                                                    }
-                                                })
-                                                .catch(() => {
-                                                    if (copyButtonRef.current) {
-                                                        copyButtonRef.current.textContent =
-                                                            "Failed to Copy";
-                                                        copyButtonRef.current.classList.add(
-                                                            "bg-red-500",
-                                                        );
-                                                        setTimeout(() => {
-                                                            if (
-                                                                copyButtonRef.current
-                                                            ) {
-                                                                copyButtonRef.current.textContent =
-                                                                    "Copy to Clipboard";
-                                                                copyButtonRef.current.classList.remove(
-                                                                    "bg-red-500",
-                                                                );
-                                                            }
-                                                        }, 2000);
-                                                    }
-                                                });
-                                        }}
-                                    >
-                                        Copy to Clipboard
-                                    </Button>
-                                    <textarea
-                                        className="w-full h-[300px] bg-slate-900 text-white rounded-md p-2"
-                                        readOnly
-                                        value={JSON.stringify(
-                                            $questions.find(
-                                                (q) => q.key === questionKey,
-                                            ),
-                                            null,
-                                            4,
-                                        )}
-                                    ></textarea>
+                                    <ShareQuestionBody
+                                        questionKey={questionKey}
+                                    />
                                 </DialogContent>
                             </Dialog>
-                            <AlertDialog>
-                                <AlertDialogTrigger asChild>
+                            <LoadingFieldset className="flex gap-2">
+                                <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                        <Button variant="outline" size="sm">
+                                            <VscTrash />
+                                        </Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                            <AlertDialogTitle>
+                                                Are you absolutely sure?
+                                            </AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                                This action cannot be undone.
+                                                This will permanently delete the
+                                                question.
+                                            </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                            <AlertDialogCancel>
+                                                Cancel
+                                            </AlertDialogCancel>
+                                            <AlertDialogAction
+                                                onClick={() => {
+                                                    questions.set([]);
+                                                }}
+                                            >
+                                                Delete All Questions
+                                            </AlertDialogAction>
+                                            <AlertDialogAction
+                                                onClick={() => {
+                                                    questions.set(
+                                                        questions
+                                                            .get()
+                                                            .filter(
+                                                                (q) =>
+                                                                    q.key !==
+                                                                    questionKey,
+                                                            ),
+                                                    );
+                                                }}
+                                                className="mb-2 sm:mb-0"
+                                            >
+                                                Delete Question
+                                            </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                </AlertDialog>
+                                {locked !== undefined && (
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        disabled={$isLoading}
+                                        onClick={() => setLocked!(!locked)}
                                     >
-                                        <VscTrash />
+                                        {locked ? <LockIcon /> : <UnlockIcon />}
                                     </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                        <AlertDialogTitle>
-                                            Are you absolutely sure?
-                                        </AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                            This action cannot be undone. This
-                                            will permanently delete the
-                                            question.
-                                        </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                        <AlertDialogCancel>
-                                            Cancel
-                                        </AlertDialogCancel>
-                                        <AlertDialogAction
-                                            onClick={() => {
-                                                questions.set([]);
-                                            }}
-                                        >
-                                            Delete All Questions
-                                        </AlertDialogAction>
-                                        <AlertDialogAction
-                                            onClick={() => {
-                                                questions.set(
-                                                    $questions.filter(
-                                                        (q) =>
-                                                            q.key !==
-                                                            questionKey,
-                                                    ),
-                                                );
-                                            }}
-                                            className="mb-2 sm:mb-0"
-                                        >
-                                            Delete Question
-                                        </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                </AlertDialogContent>
-                            </AlertDialog>
-                            {locked !== undefined && (
+                                )}
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => setLocked!(!locked)}
-                                    disabled={$isLoading}
+                                    onClick={() => setHidden!(!hidden)}
                                 >
-                                    {locked ? <LockIcon /> : <UnlockIcon />}
+                                    {hidden ? <EyeOffIcon /> : <EyeIcon />}
                                 </Button>
-                            )}
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setHidden!(!hidden)}
-                                disabled={$isLoading}
-                            >
-                                {hidden ? <EyeOffIcon /> : <EyeIcon />}
-                            </Button>
+                            </LoadingFieldset>
                         </div>
                     </SidebarGroupContent>
                 </div>
             </SidebarGroup>
             <Separator className="h-1" />
+        </>
+    );
+};
+
+/** Rendered only while the share dialog is open */
+const ShareQuestionBody = ({ questionKey }: { questionKey: number }) => {
+    const $questions = useStore(questions);
+    const copyButtonRef = useRef<HTMLButtonElement>(null);
+
+    return (
+        <>
+            <Button
+                variant="outline"
+                size="sm"
+                className="mb-2 sm:mb-0 transition-colors"
+                ref={copyButtonRef}
+                onClick={() => {
+                    navigator.clipboard
+                        .writeText(
+                            JSON.stringify(
+                                questions
+                                    .get()
+                                    .find((q) => q.key === questionKey),
+                                null,
+                                4,
+                            ),
+                        )
+                        .then(() => {
+                            if (copyButtonRef.current) {
+                                copyButtonRef.current.textContent = "Copied!";
+                                copyButtonRef.current.classList.add(
+                                    "bg-green-500",
+                                );
+                                setTimeout(() => {
+                                    if (copyButtonRef.current) {
+                                        copyButtonRef.current.textContent =
+                                            "Copy to Clipboard";
+                                        copyButtonRef.current.classList.remove(
+                                            "bg-green-500",
+                                        );
+                                    }
+                                }, 2000);
+                            }
+                        })
+                        .catch(() => {
+                            if (copyButtonRef.current) {
+                                copyButtonRef.current.textContent =
+                                    "Failed to Copy";
+                                copyButtonRef.current.classList.add(
+                                    "bg-red-500",
+                                );
+                                setTimeout(() => {
+                                    if (copyButtonRef.current) {
+                                        copyButtonRef.current.textContent =
+                                            "Copy to Clipboard";
+                                        copyButtonRef.current.classList.remove(
+                                            "bg-red-500",
+                                        );
+                                    }
+                                }, 2000);
+                            }
+                        });
+                }}
+            >
+                Copy to Clipboard
+            </Button>
+            <textarea
+                className="w-full h-[300px] bg-slate-900 text-white rounded-md p-2"
+                readOnly
+                value={JSON.stringify(
+                    $questions.find((q) => q.key === questionKey),
+                    null,
+                    4,
+                )}
+            ></textarea>
         </>
     );
 };

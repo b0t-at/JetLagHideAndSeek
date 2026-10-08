@@ -1,3 +1,5 @@
+import "@/maps/geo-utils/arcgis-config";
+
 import * as units from "@arcgis/core/core/units.js";
 import * as geodesicBufferOperator from "@arcgis/core/geometry/operators/geodesicBufferOperator.js";
 import * as geodeticDistanceOperator from "@arcgis/core/geometry/operators/geodeticDistanceOperator.js";
@@ -25,17 +27,27 @@ export const safeUnion = (input: FeatureCollection<Polygon | MultiPolygon>) => {
     throw new Error("No features");
 };
 
+// Geometries are treated as immutable, so the mask of the same object is reused
+const holedMasks = new WeakMap<
+    object,
+    Feature<Polygon | MultiPolygon> | null
+>();
+
 export const holedMask = (
     input:
         | Feature<Polygon | MultiPolygon>
         | FeatureCollection<Polygon | MultiPolygon>,
 ) => {
-    return turf.difference(
+    if (holedMasks.has(input)) return holedMasks.get(input)!;
+
+    const mask = turf.difference(
         turf.featureCollection([
             BLANK_GEOJSON.features[0] as Feature<Polygon>,
             "features" in input ? safeUnion(input) : input,
         ]),
     );
+    holedMasks.set(input, mask);
+    return mask;
 };
 
 export const modifyMapData = (
