@@ -406,7 +406,7 @@ export const PolygonDraw = () => {
             {question &&
                 question.id === "matching" &&
                 question.data.type === "custom-points" &&
-                question.data.geo.map((x: any) => (
+                (question.data.geo ?? []).map((x: any) => (
                     <MatchingPointMarker
                         key={x.geometry.coordinates.join(",")}
                         point={x}
@@ -416,7 +416,7 @@ export const PolygonDraw = () => {
                 question.id === "measuring" &&
                 question.data.type === "custom-measure" &&
                 turf
-                    .flatten(question.data.geo)
+                    .flatten(question.data.geo ?? turf.featureCollection([]))
                     .features.filter((x: any) => turf.getType(x) === "Point")
                     .map((x: any) => (
                         <MeasuringPointMarker
@@ -428,7 +428,7 @@ export const PolygonDraw = () => {
                 question.id === "measuring" &&
                 question.data.type === "custom-measure" &&
                 turf
-                    .flatten(question.data.geo)
+                    .flatten(question.data.geo ?? turf.featureCollection([]))
                     .features.filter((x: any) => turf.getType(x) === "Polygon")
                     .map((x: any) => (
                         <Polygon
@@ -445,7 +445,7 @@ export const PolygonDraw = () => {
                 question.id === "measuring" &&
                 question.data.type === "custom-measure" &&
                 turf
-                    .flatten(question.data.geo)
+                    .flatten(question.data.geo ?? turf.featureCollection([]))
                     .features.filter(
                         (x: any) => turf.getType(x) === "LineString",
                     )
