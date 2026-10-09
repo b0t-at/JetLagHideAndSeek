@@ -23,6 +23,22 @@ div.leaflet-control-attribution.leaflet-control {
     z-index: 751;
 }
 
+/* iOS opens its image preview menu on a long-pressed marker image (Leaflet issue #6865) */
+.leaflet-marker-icon {
+    -webkit-touch-callout: none;
+}
+
+/*
+ * Fullscreen stand-in on touch devices (see LeafletFullScreenButton): above the
+ * app and its sidebars, below Radix popovers (z-[1050], portaled to the body)
+ * and the toasts (z-index 9999)
+ */
+#map-modal-dialog-container-leaflet.pseudo-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 1045;
+}
+
 @layer base {
     html {
         @apply text-slate-50;

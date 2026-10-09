@@ -41,7 +41,10 @@ import { hiderifyQuestion } from "@/maps";
 import { clearCache, determineMapBoundaries } from "@/maps/api";
 
 import { DraggableMarkers } from "./DraggableMarkers";
-import { LeafletFullScreenButton } from "./LeafletFullScreenButton";
+import {
+    LeafletFullScreenButton,
+    pseudoFullScreen,
+} from "./LeafletFullScreenButton";
 import { MapPrint } from "./MapPrint";
 import { PolygonDraw } from "./PolygonDraw";
 
@@ -615,11 +618,16 @@ export const Map = ({ className }: { className?: string }) => {
 
     useEffect(() => {
         const handleFullscreenChange = () => {
+            const isPseudoFullScreen = pseudoFullScreen.get();
             const mainElement: HTMLElement | null =
                 document.querySelector("main");
 
+            document
+                .querySelector("#map-modal-dialog-container-leaflet")
+                ?.classList.toggle("pseudo-fullscreen", isPseudoFullScreen);
+
             if (mainElement) {
-                if (document.fullscreenElement) {
+                if (document.fullscreenElement || isPseudoFullScreen) {
                     mainElement.classList.add("fullscreen");
                 } else {
                     mainElement.classList.remove("fullscreen");
@@ -628,12 +636,17 @@ export const Map = ({ className }: { className?: string }) => {
         };
 
         document.addEventListener("fullscreenchange", handleFullscreenChange);
+        // The CSS stand-in for fullscreen on touch devices
+        const unbindPseudoFullScreen = pseudoFullScreen.listen(
+            handleFullscreenChange,
+        );
 
         return () => {
             document.removeEventListener(
                 "fullscreenchange",
                 handleFullscreenChange,
             );
+            unbindPseudoFullScreen();
         };
     }, []);
 
@@ -651,6 +664,7 @@ export const Map = ({ className }: { className?: string }) => {
             return;
         }
 
+        let warnedNoPosition = false;
         geoWatchIdRef.current = navigator.geolocation.watchPosition(
             (pos) => {
                 const lat = pos.coords.latitude;
@@ -669,9 +683,23 @@ export const Map = ({ className }: { className?: string }) => {
                     followMeMarkerRef.current = marker;
                 }
             },
-            () => {
-                toast.error("Unable to access your location.");
-                followMe.set(false);
+            (error) => {
+                if (error.code === error.PERMISSION_DENIED) {
+                    toast.error("Unable to access your location.");
+                    followMe.set(false);
+                    return;
+                }
+
+                // A timeout or missing position is temporary (indoors,
+                // underground, a Wi-Fi-only iPad, a page resumed after the
+                // screen was locked) and the watch keeps trying, so keep
+                // following. Say so once if there's no position at all yet
+                if (!followMeMarkerRef.current && !warnedNoPosition) {
+                    warnedNoPosition = true;
+                    toast.warning(
+                        "Can't find your location yet, still trying.",
+                    );
+                }
             },
             { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
         );

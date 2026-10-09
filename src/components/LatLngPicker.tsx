@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDebounce } from "@/hooks/useDebounce";
 import { allowGooglePlusCodes, isLoading } from "@/lib/context";
-import { cn, readClipboardText } from "@/lib/utils";
+import { cn, focusDialogOnTouch, readClipboardText } from "@/lib/utils";
 import { determineName, geocode, ICON_COLORS } from "@/maps/api";
 
 import { Button } from "./ui/button";
@@ -146,9 +146,11 @@ const LatLngEditForm = ({
     return (
         <>
             <Command shouldFilter={false}>
+                {/* onValueChange, not onKeyUp: paste and dictation on iPad
+                    insert text without key events */}
                 <CommandInput
                     placeholder="Search place..."
-                    onKeyUp={(x) => setInputValue(x.currentTarget.value)}
+                    onValueChange={setInputValue}
                     disabled={disabled}
                 />
                 <CommandList>
@@ -395,11 +397,12 @@ export const LatitudeLongitude = ({
                                     disabled={disabled}
                                     variant="outline"
                                     title="Edit coordinates"
+                                    aria-label="Edit coordinates"
                                 >
                                     <EditIcon />
                                 </Button>
                             </DialogTrigger>
-                            <DialogContent>
+                            <DialogContent onOpenAutoFocus={focusDialogOnTouch}>
                                 <DialogHeader>
                                     <DialogTitle className="text-2xl">
                                         Update {label}
@@ -467,6 +470,7 @@ export const LatitudeLongitude = ({
                             }}
                             disabled={disabled || $isLoading}
                             title="Set to current location"
+                            aria-label="Set to current location"
                         >
                             <LocateIcon />
                         </Button>
@@ -509,6 +513,7 @@ export const LatitudeLongitude = ({
                             }}
                             disabled={disabled || $isLoading}
                             title="Paste coordinates from clipboard"
+                            aria-label="Paste coordinates from clipboard"
                         >
                             <ClipboardPasteIcon />
                         </Button>
@@ -537,6 +542,7 @@ export const LatitudeLongitude = ({
                                 );
                             }}
                             title="Copy coordinates to clipboard"
+                            aria-label="Copy coordinates to clipboard"
                         >
                             <ClipboardCopyIcon />
                         </Button>

@@ -44,12 +44,6 @@ import {
 
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipProvider,
-    TooltipTrigger,
-} from "./ui/tooltip";
 
 export const PlacePicker = ({
     className = "",
@@ -152,26 +146,33 @@ export const PlacePicker = ({
                             key={determineName(location.location)}
                         >
                             <div className="flex min-w-0 items-center gap-3">
-                                <TooltipProvider>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <span className="relative h-6 w-9 shrink-0 text-slate-700">
-                                                <BsCircleFill className="absolute size-6" />
-                                                {location.added ? (
-                                                    <BsCircleFill className="absolute left-3 size-6" />
-                                                ) : (
-                                                    <LucideCircleDashed className="absolute left-3 size-6 rounded-full bg-white" />
-                                                )}
-                                            </span>
-                                        </TooltipTrigger>
-
-                                        <TooltipContent>
-                                            {location.added
-                                                ? "Included location"
-                                                : "Excluded location"}
-                                        </TooltipContent>
-                                    </Tooltip>
-                                </TooltipProvider>
+                                {/* A popover, not a tooltip: Radix Tooltip
+                                    ignores touch, so it never opened on a tap */}
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <button
+                                            type="button"
+                                            aria-label={
+                                                location.added
+                                                    ? "Included location"
+                                                    : "Excluded location"
+                                            }
+                                            className="relative h-6 w-9 shrink-0 cursor-help text-slate-700"
+                                        >
+                                            <BsCircleFill className="absolute left-0 top-0 size-6" />
+                                            {location.added ? (
+                                                <BsCircleFill className="absolute left-3 top-0 size-6" />
+                                            ) : (
+                                                <LucideCircleDashed className="absolute left-3 top-0 size-6 rounded-full bg-white" />
+                                            )}
+                                        </button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-auto px-3 py-1.5 text-sm light">
+                                        {location.added
+                                            ? "Included location"
+                                            : "Excluded location"}
+                                    </PopoverContent>
+                                </Popover>
                                 <span className="truncate">
                                     {determineName(location.location)}
                                 </span>
@@ -283,11 +284,11 @@ export const PlacePicker = ({
                 </div>
                 <Separator className="h-[0.5px]" />
                 <Command shouldFilter={false}>
+                    {/* onValueChange, not onKeyUp: paste and dictation on
+                        iPad insert text without key events */}
                     <CommandInput
                         placeholder="Search place..."
-                        onKeyUp={(x) => {
-                            setInputValue(x.currentTarget.value);
-                        }}
+                        onValueChange={setInputValue}
                     />
                     <CommandList>
                         <CommandEmpty>

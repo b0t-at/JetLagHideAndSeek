@@ -1,8 +1,8 @@
 import { useStore } from "@nanostores/react";
-import { type DragEndEvent, Icon } from "leaflet";
+import { DomEvent, type DragEndEvent, Icon } from "leaflet";
 import { useState } from "react";
 import { Fragment } from "react/jsx-runtime";
-import { Marker } from "react-leaflet";
+import { Marker, useMap } from "react-leaflet";
 
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
@@ -13,6 +13,7 @@ import {
     save,
     triggerLocalRefresh,
 } from "@/lib/context";
+import { focusDialogOnTouch } from "@/lib/utils";
 import type { ICON_COLORS } from "@/maps/api";
 
 import { LatitudeLongitude } from "./LatLngPicker";
@@ -47,6 +48,7 @@ const ColoredMarker = ({
     const $hiderMode = useStore(hiderMode);
     const $autoSave = useStore(autoSave);
     const [open, setOpen] = useState(false);
+    const map = useMap();
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
@@ -69,6 +71,8 @@ const ColoredMarker = ({
                 eventHandlers={{
                     dragstart: () => {
                         isDragging = true;
+                        // Added by leaflet-contextmenu, which has no types
+                        (map as any).contextmenu?.hide();
                     },
                     dragend: (x) => {
                         onChange(x);
@@ -81,9 +85,15 @@ const ColoredMarker = ({
                             setOpen(true);
                         }
                     },
+                    // A long-press on the pin (TapHold on iPad, e.g. before
+                    // dragging it) shouldn't open the map's context menu
+                    contextmenu: (e) => DomEvent.stopPropagation(e),
                 }}
             />
-            <DialogContent className="!bg-[hsl(var(--sidebar-background))] !text-white">
+            <DialogContent
+                className="!bg-[hsl(var(--sidebar-background))] !text-white"
+                onOpenAutoFocus={focusDialogOnTouch}
+            >
                 {questionKey === -1 && $hiderMode !== false && (
                     <>
                         <h2 className="text-center text-2xl font-bold font-poppins">

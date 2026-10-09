@@ -16,7 +16,11 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useIsMobile } from "@/hooks/use-mobile";
+import {
+    noteDockedSidebarOpen,
+    useIsMobile,
+    useSingleDockedSidebar,
+} from "@/hooks/use-mobile";
 import { useTutorialStep } from "@/hooks/use-tutorial-step";
 import { cn } from "@/lib/utils";
 
@@ -86,12 +90,14 @@ const SidebarProvider = React.forwardRef<
                 } else {
                     _setOpen(openState);
                 }
+                noteDockedSidebarOpen("left", openState);
 
                 // This sets the cookie to keep the sidebar state.
                 document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
             },
             [setOpenProp, open],
         );
+        useSingleDockedSidebar("left", open, setOpen);
 
         // Helper to toggle the sidebar.
         const toggleSidebar = React.useCallback(() => {
@@ -297,6 +303,9 @@ const SidebarTrigger = React.forwardRef<
             size="icon"
             className={cn(
                 "bg-white hover:bg-[#f4f4f4] text-black rounded-sm border-2 border-black border-opacity-30 cursor-pointer py-1 px-2",
+                // A 44x42 hit area for fingers around the 36x28 button. It grows
+                // up and sideways, not down onto the map controls below it.
+                "relative after:absolute after:-inset-x-1.5 after:-top-3 after:-bottom-1.5",
                 "flex items-center gap-1",
                 className,
             )}

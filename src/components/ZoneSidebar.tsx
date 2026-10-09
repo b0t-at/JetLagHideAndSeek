@@ -612,12 +612,23 @@ export const ZoneSidebar = () => {
         <Sidebar side="right">
             <div className="flex items-center justify-between">
                 <h2 className="ml-4 mt-4 font-poppins text-2xl">Hiding Zone</h2>
-                <SidebarCloseIcon
-                    className="mr-2 visible md:hidden scale-x-[-1]"
+                {/* Shown on the docked layout too: on a touch screen the
+                    trigger on the map is the only other way to close it */}
+                <button
+                    type="button"
+                    aria-label="Close hiding zone"
+                    className="p-2"
                     onClick={() => {
-                        SidebarContext.get().setOpenMobile(false);
+                        const sidebar = SidebarContext.get();
+                        if (sidebar.isMobile) {
+                            sidebar.setOpenMobile(false);
+                        } else {
+                            sidebar.setOpen(false);
+                        }
                     }}
-                />
+                >
+                    <SidebarCloseIcon className="scale-x-[-1]" />
+                </button>
             </div>
             <SidebarContent ref={sidebarRef}>
                 <ScrollToTop element={sidebarRef} minHeight={500} />
@@ -625,10 +636,14 @@ export const ZoneSidebar = () => {
                     <SidebarGroupContent>
                         <SidebarMenu>
                             <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
-                                <Label className="font-semibold font-poppins">
+                                <Label
+                                    htmlFor="display-hiding-zones"
+                                    className="font-semibold font-poppins"
+                                >
                                     Display hiding zones?
                                 </Label>
                                 <Checkbox
+                                    id="display-hiding-zones"
                                     defaultChecked={$displayHidingZones}
                                     checked={$displayHidingZones}
                                     onCheckedChange={displayHidingZones.set}
@@ -646,10 +661,14 @@ export const ZoneSidebar = () => {
                             </SidebarMenuItem>
                             <SidebarMenuItem className={MENU_ITEM_CLASSNAME}>
                                 <div className="flex flex-row items-center justify-between w-full">
-                                    <Label className="font-semibold font-poppins">
+                                    <Label
+                                        htmlFor="merge-duplicated-stations"
+                                        className="font-semibold font-poppins"
+                                    >
                                         Merge duplicated stations?
                                     </Label>
                                     <Checkbox
+                                        id="merge-duplicated-stations"
                                         checked={mergeDuplicates}
                                         onCheckedChange={(v) =>
                                             mergeDuplicatesAtom.set(!!v)
@@ -716,10 +735,14 @@ export const ZoneSidebar = () => {
                                         </button>
                                     </div>
                                     <div>
+                                        {/* No accept filter: the iPad Files picker
+                                            greys out extensions without a system
+                                            type (.kml, and .geojson before iPadOS
+                                            18). The importer detects the format
+                                            from the content. */}
                                         <Input
                                             type="file"
                                             multiple
-                                            accept=".csv,.json,.geojson,.kml,application/json,application/vnd.google-earth.kml+xml,text/csv,application/vnd.google-apps.kml+xml,application/xml,text/xml"
                                             onInput={async (e) => {
                                                 const files = (
                                                     e.target as HTMLInputElement

@@ -48,6 +48,7 @@ import {
 import {
     cn,
     compress,
+    copyToClipboard,
     decompress,
     fetchFromPastebin,
     readClipboardText,
@@ -77,6 +78,19 @@ const PASTEBIN_URL_PARAM = "pb";
 const FETCH_URL_PARAM = "url";
 // GitHub Pages accepts ~8 KB request lines; stay well below for messengers
 const MAX_SHARE_URL_LENGTH = 4000;
+
+/**
+ * Encodes a hiding zone for the legacy `hz` parameter, read back with atob(). btoa()
+ * only takes Latin-1, so non-ASCII characters (only possible inside JSON strings)
+ * are written as JSON \u escapes first.
+ */
+const encodeLegacyHidingZone = (json: string) =>
+    btoa(
+        json.replace(
+            /[\u0080-\uffff]/g,
+            (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"),
+        ),
+    );
 
 /** Converts a hiding radius between units, rounded so the input stays readable */
 const convertHidingRadius = (radius: number, from: Units, to: Units) =>
@@ -151,19 +165,29 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
             }
         } else if (hidingZoneCompressed !== null) {
             // Modern compressed format
-            decompress(hidingZoneCompressed).then((data) => {
-                try {
-                    loadHidingZone(data);
-                    // Remove hiding zone parameter after initial load
-                    window.history.replaceState(
-                        {},
-                        "",
-                        window.location.pathname,
+            decompress(hidingZoneCompressed)
+                .then((data) => {
+                    try {
+                        loadHidingZone(data);
+                        // Remove hiding zone parameter after initial load
+                        window.history.replaceState(
+                            {},
+                            "",
+                            window.location.pathname,
+                        );
+                    } catch (e) {
+                        toast.error(`Invalid hiding zone settings: ${e}`);
+                    }
+                })
+                .catch((error) => {
+                    console.error("Failed to decompress hiding zone:", error);
+                    // Safari/iPadOS before 16.4 has no DecompressionStream
+                    toast.error(
+                        typeof DecompressionStream === "function"
+                            ? "This hiding zone link is damaged and can't be opened."
+                            : "This browser is too old to open this hiding zone link. Update it, or ask for the hiding zone as a file.",
                     );
-                } catch (e) {
-                    toast.error(`Invalid hiding zone settings: ${e}`);
-                }
-            });
+                });
         } else if (pastebinId !== null) {
             fetchFromPastebin(pastebinId)
                 .then((data) => {
@@ -367,7 +391,11 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
     return (
         <div
             className={cn(
-                "flex justify-end gap-2 max-[412px]:!mb-4 max-[640px]:overflow-x-auto max-[640px]:w-[85vw] max-[640px]:justify-start max-[640px]:[&>button]:flex-shrink-0 max-[640px]:[&>div]:flex-shrink-0 max-[640px]:pb-1",
+                // Scrolls sideways whenever the map is too narrow (e.g. an iPad with docked
+                // sidebars); above 640px the w-24 buttons first shrink to their text. The
+                // padding, cancelled by the negative margins, keeps the scroller from clipping
+                // the button shadows and keyboard focus rings on wider screens
+                "flex max-w-full justify-start gap-2 overflow-x-auto min-[641px]:-mx-1 min-[641px]:-mb-2.5 min-[641px]:-mt-1 min-[641px]:max-w-[calc(100%+0.5rem)] min-[641px]:px-1 min-[641px]:pb-2.5 min-[641px]:pt-1 max-[412px]:!mb-4 max-[640px]:w-[85vw] max-[640px]:pb-1 max-[640px]:[&>button]:flex-shrink-0 max-[640px]:[&>div]:flex-shrink-0",
                 className,
             )}
         >
@@ -400,17 +428,17 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                 className="shadow-md"
                 onClick={async () => {
                     const hidingZoneString = JSON.stringify($hidingZone);
-                    let compressedData;
-                    try {
-                        compressedData = await compress(hidingZoneString);
-                    } catch (error) {
-                        console.error("Compression failed:", error);
-                        toast.error(`Failed to prepare data for sharing`);
-                        return;
-                    }
-
                     const baseUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}`;
-                    let shareUrl = `${baseUrl}?${HIDING_ZONE_COMPRESSED_URL_PARAM}=${compressedData}`;
+                    let shareUrl;
+                    try {
+                        const compressedData = await compress(hidingZoneString);
+                        shareUrl = `${baseUrl}?${HIDING_ZONE_COMPRESSED_URL_PARAM}=${compressedData}`;
+                    } catch (error) {
+                        // Safari/iPadOS before 16.4 has no CompressionStream, and could not
+                        // open an hzc link either: share an uncompressed legacy link instead
+                        console.warn("Compression failed:", error);
+                        shareUrl = `${baseUrl}?${HIDING_ZONE_URL_PARAM}=${encodeURIComponent(encodeLegacyHidingZone(hidingZoneString))}`;
+                    }
                     const urlTooLong = shareUrl.length > MAX_SHARE_URL_LENGTH;
 
                     if ($alwaysUsePastebin || urlTooLong) {
@@ -453,24 +481,21 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                     }
 
                     // Show platform native share sheet if possible
-                    await shareOrFallback(shareUrl).then((result) => {
-                        console.log(`result ${result}`);
-                        if (result === false) {
-                            return toast.error(
-                                `Clipboard not supported. Try manually copying/pasting: ${shareUrl}`,
-                                { className: "p-0 w-[1000px]" },
-                            );
-                        }
-
-                        if (result === "clipboard") {
-                            toast.success(
-                                "Hiding zone URL copied to clipboard",
-                                {
-                                    autoClose: 2000,
-                                },
-                            );
-                        }
-                    });
+                    // (a dismissed sheet returns "cancelled" and needs no message)
+                    const result = await shareOrFallback(shareUrl);
+                    if (result === "clipboard") {
+                        toast.success("Hiding zone URL copied to clipboard", {
+                            autoClose: 2000,
+                        });
+                    } else if (result === false) {
+                        // WebKit refuses clipboard writes once a share attempt or a slow
+                        // Pastebin upload has used up the tap, so offer the URL to copy by hand
+                        toast.error(
+                            `Couldn't share or copy the link. Copy it by hand: ${shareUrl}`,
+                            { className: "p-0 w-[1000px]" },
+                        );
+                        window.prompt("Copy this hiding zone link:", shareUrl);
+                    }
                 }}
                 data-tutorial-id="share-questions-button"
             >
@@ -503,14 +528,16 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                         <div className="overflow-y-scroll max-h-[40vh] flex flex-col items-center gap-4 max-w-[1000px] px-12">
                             <div className="flex flex-row max-[330px]:flex-col gap-4">
                                 <Button
-                                    onClick={() => {
-                                        if (!navigator || !navigator.clipboard)
+                                    onClick={async () => {
+                                        if (
+                                            !(await copyToClipboard(
+                                                JSON.stringify($hidingZone),
+                                            ))
+                                        ) {
                                             return toast.error(
-                                                "Clipboard not supported",
+                                                "Couldn't copy the hiding zone. Use Save File instead.",
                                             );
-                                        navigator.clipboard.writeText(
-                                            JSON.stringify($hidingZone),
-                                        );
+                                        }
                                         toast.success(
                                             "Hiding zone copied successfully",
                                             {
@@ -687,10 +714,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                             </div>
                             <Separator className="bg-slate-300 w-[280px]" />
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="animateMapMovements"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Animate map movements?
                                 </label>
                                 <Checkbox
+                                    id="animateMapMovements"
                                     checked={$animateMapMovements}
                                     onCheckedChange={() => {
                                         animateMapMovements.set(
@@ -700,10 +731,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="alwaysUsePastebin"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Force Pastebin for sharing?
                                 </label>
                                 <Checkbox
+                                    id="alwaysUsePastebin"
                                     checked={$alwaysUsePastebin}
                                     onCheckedChange={() =>
                                         alwaysUsePastebin.set(
@@ -713,10 +748,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="planningModeEnabled"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Enable planning mode?
                                 </label>
                                 <Checkbox
+                                    id="planningModeEnabled"
                                     checked={$planningMode}
                                     onCheckedChange={() => {
                                         if ($planningMode === true) {
@@ -741,10 +780,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="autoSave"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Auto save?
                                 </label>
                                 <Checkbox
+                                    id="autoSave"
                                     checked={$autoSave}
                                     onCheckedChange={() =>
                                         autoSave.set(!$autoSave)
@@ -752,10 +795,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="autoZoom"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Auto zoom?
                                 </label>
                                 <Checkbox
+                                    id="autoZoom"
                                     checked={$autoZoom}
                                     onCheckedChange={() =>
                                         autoZoom.set(!$autoZoom)
@@ -763,10 +810,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="followMe"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Follow Me (GPS)?
                                 </label>
                                 <Checkbox
+                                    id="followMe"
                                     checked={$followMe}
                                     onCheckedChange={() =>
                                         followMe.set(!$followMe)
@@ -774,10 +825,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="defaultCustomQuestions"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Default to custom questions?
                                 </label>
                                 <Checkbox
+                                    id="defaultCustomQuestions"
                                     checked={$defaultCustomQuestions}
                                     onCheckedChange={() =>
                                         defaultCustomQuestions.set(
@@ -787,10 +842,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="allowGooglePlusCodes"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Allow Google Plus codes?
                                 </label>
                                 <Checkbox
+                                    id="allowGooglePlusCodes"
                                     checked={$allowGooglePlusCodes}
                                     onCheckedChange={() =>
                                         allowGooglePlusCodes.set(
@@ -800,10 +859,14 @@ export const OptionDrawers = ({ className }: { className?: string }) => {
                                 />
                             </div>
                             <div className="flex flex-row items-center gap-2">
-                                <label className="text-2xl font-semibold font-poppins">
+                                <label
+                                    htmlFor="hiderMode"
+                                    className="text-2xl font-semibold font-poppins"
+                                >
                                     Hider mode?
                                 </label>
                                 <Checkbox
+                                    id="hiderMode"
                                     checked={!!$hiderMode}
                                     onCheckedChange={() => {
                                         if ($hiderMode === false) {

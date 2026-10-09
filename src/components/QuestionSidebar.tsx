@@ -41,12 +41,23 @@ export const QuestionSidebar = () => {
         <QuestionSidebarShell>
             <div className="flex items-center justify-between">
                 <h2 className="ml-4 mt-4 font-poppins text-2xl">Questions</h2>
-                <SidebarCloseIcon
-                    className="mr-2 visible md:hidden"
+                {/* Shown on the docked layout too: on a touch screen the
+                    trigger on the map is the only other way to close it */}
+                <button
+                    type="button"
+                    aria-label="Close questions"
+                    className="p-2"
                     onClick={() => {
-                        SidebarContext.get().setOpenMobile(false);
+                        const sidebar = SidebarContext.get();
+                        if (sidebar.isMobile) {
+                            sidebar.setOpenMobile(false);
+                        } else {
+                            sidebar.setOpen(false);
+                        }
                     }}
-                />
+                >
+                    <SidebarCloseIcon />
+                </button>
             </div>
             <SidebarContent>
                 {$questions.map((question) => {

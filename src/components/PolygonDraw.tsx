@@ -1,4 +1,5 @@
 import "leaflet-draw/dist/leaflet.draw.css";
+import "leaflet-draw";
 
 import { useStore } from "@nanostores/react";
 import * as turf from "@turf/turf";
@@ -10,7 +11,7 @@ import type {
 import * as L from "leaflet";
 import _ from "lodash";
 import { useEffect, useRef, useState } from "react";
-import { FeatureGroup, Marker, Polygon, Polyline } from "react-leaflet";
+import { FeatureGroup, Marker, Polygon, Polyline, useMap } from "react-leaflet";
 import { EditControl } from "react-leaflet-draw";
 
 import {
@@ -22,6 +23,7 @@ import {
     questions,
     save,
 } from "@/lib/context";
+import { focusDialogOnTouch } from "@/lib/utils";
 import { CacheType, clearCache } from "@/maps/api";
 import { lngLatToText } from "@/maps/geo-utils";
 import type {
@@ -39,6 +41,18 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from "./ui/sidebar-l";
+
+// leaflet-draw adds a line or polygon vertex on touchstart (Leaflet.draw issue
+// #789): every pan or pinch adds a stray vertex, the click that follows a tap
+// lands on the new vertex and finishes a line after 2 points, and polygons flash
+// a false "edges cannot cross" error. Without it, taps add vertices through the
+// mouse events the browser sends after them, as on desktop
+// @ts-expect-error Private leaflet-draw method, so it is not typed
+L.Draw.Polyline.prototype._onTouch = L.Util.falseFn;
+
+/** Keeps a long-press on a marker (TapHold on iPad) off the map's context menu */
+const stopContextMenu = (e: L.LeafletMouseEvent) =>
+    L.DomEvent.stopPropagation(e);
 
 const swapCoordinates = (geojson: any) => {
     return JSON.parse(JSON.stringify(geojson), (key, value) => {
@@ -75,9 +89,10 @@ const TentacleMarker = ({
                     click: () => {
                         setOpen(true);
                     },
+                    contextmenu: stopContextMenu,
                 }}
             />
-            <DialogContent>
+            <DialogContent onOpenAutoFocus={focusDialogOnTouch}>
                 <div className="flex flex-col gap-2">
                     <Input
                         className="text-center !text-2xl font-bold font-poppins mt-3"
@@ -141,9 +156,10 @@ const MatchingPointMarker = ({
                     click: () => {
                         setOpen(true);
                     },
+                    contextmenu: stopContextMenu,
                 }}
             />
-            <DialogContent>
+            <DialogContent onOpenAutoFocus={focusDialogOnTouch}>
                 <div className="flex flex-col gap-2">
                     <SidebarMenu>
                         <LatitudeLongitude
@@ -199,9 +215,10 @@ const MeasuringPointMarker = ({
                     click: () => {
                         setOpen(true);
                     },
+                    contextmenu: stopContextMenu,
                 }}
             />
-            <DialogContent>
+            <DialogContent onOpenAutoFocus={focusDialogOnTouch}>
                 <div className="flex flex-col gap-2">
                     <SidebarMenu>
                         <LatitudeLongitude
@@ -239,8 +256,33 @@ const MeasuringPointMarker = ({
 export const PolygonDraw = () => {
     const $drawingQuestionKey = useStore(drawingQuestionKey);
     const $questions = useStore(questions);
+    const map = useMap();
 
     const featureRef = useRef<any | null>(null);
+
+    useEffect(() => {
+        // Added by leaflet-contextmenu, which has no types
+        const contextMenu = (map as any).contextmenu;
+        if (!contextMenu) return;
+
+        // While a draw, edit or delete tool is active, a long-press (TapHold on
+        // iPad) or right-click would open the map's context menu over the shape
+        const toolStarted = () => {
+            contextMenu.hide();
+            contextMenu.disable();
+        };
+        const toolStopped = () => contextMenu.enable();
+        const startEvents = "draw:drawstart draw:editstart draw:deletestart";
+        const stopEvents = "draw:drawstop draw:editstop draw:deletestop";
+
+        map.on(startEvents, toolStarted);
+        map.on(stopEvents, toolStopped);
+        return () => {
+            map.off(startEvents, toolStarted);
+            map.off(stopEvents, toolStopped);
+            contextMenu.enable();
+        };
+    }, [map]);
 
     let question: Question | undefined;
 

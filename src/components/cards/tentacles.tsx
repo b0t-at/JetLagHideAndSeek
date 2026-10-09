@@ -221,7 +221,8 @@ const TentacleQuestionCard = ({
             </SidebarMenuItem>
             {data.locationType === "custom" && data.drag && (
                 <>
-                    <p className="px-2 mb-1 text-center text-orange-500">
+                    {/* A label, so tapping the text toggles the checkbox */}
+                    <label className="block px-2 mb-1 text-center text-orange-500">
                         To modify tentacle locations, enable it:
                         <Checkbox
                             className="mx-1 my-1"
@@ -236,7 +237,7 @@ const TentacleQuestionCard = ({
                             disabled={!data.drag}
                         />
                         and use the buttons at the bottom left of the map.
-                    </p>
+                    </label>
                     <div className="flex justify-center mb-2">
                         <PresetsDialog
                             data={data}
